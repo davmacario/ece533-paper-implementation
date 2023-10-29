@@ -83,6 +83,7 @@ class CurveFitter:
         self.batch_size = 0  # If set to 1, the update is 'online'
 
         self.eta = None
+        self.mse_per_epoch = None
 
     def createTrainSet(self, n_train: int) -> [np.ndarray, np.ndarray]:
         """
@@ -188,7 +189,7 @@ class CurveFitter:
             (self.n_train, self.n_hidden)
         )  # Intermediate values (for backpropagation)
 
-        # Number of iterations per epoch is given by the batch size
+        # Number of iterations per epoch (= number of batches)
         n_iter_epoch = np.ceil(self.n_train / batch_size)
         # Tau: number of total iterations = floor(epochs * n_train / batch size)
         tau = np.ceil(n_epochs * self.n_train / batch_size)
@@ -228,7 +229,9 @@ class CurveFitter:
 
                 self.w = self.w - self.eta * avg_grad_batch
 
-                # NOTE: HERE
+            mse_curr = mse(self.y_train, y_curr)
+
+        return batch_gradients
 
     def grad(self, x: float, d: float, y: float, v: np.ndarray) -> np.ndarray:
         """
@@ -308,6 +311,31 @@ class CurveFitter:
         y = sum(z * w_prime_ij) + b_prime
 
         return y, v
+
+    def plotTrainingStats(self, img_path: str = None) -> int:
+        """
+        plotTrainingStats
+        ---
+        Plot MSE vs. epoch for last training.
+
+        Can provide a path for the image to save it.
+        """
+        if self.mse_per_epoch is None:
+            warnings.warn("No training was launched yet!")
+            return 0
+
+        fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
+        ax.plot(list(range(len(self.mse_per_epoch))), self.mse_per_epoch)
+        ax.grid()
+        plt.title(
+            f"MSE vs. epoch, eta = {self.eta}, final MSE = {self.mse_per_epoch[-1]}"
+        )
+        ax.set_xlabel(r"epoch")
+        ax.set_ylabel(r"MSE")
+        if img_path is not None:
+            plt.savefig(os.path.join(img_path))
+        plt.show()
+        return 1
 
 
 ########################################### To be reviewed:
