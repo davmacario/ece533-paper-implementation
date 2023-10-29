@@ -297,7 +297,7 @@ def main(n: int, N: int, img_folder: str, plots: bool = False):
     w = np.random.normal(0, 1, (3 * N + 1, 1))  # Gaussian initialization of weights
 
     w_0, mean_x = backpropagation(
-        x, d, eta, N, w, max_epoch=15000, img_folder=img_folder, plots=plots
+        x, d, eta, N, w, max_epoch=1000, img_folder=img_folder, plots=plots
     )
 
     print("BP terminated!")
