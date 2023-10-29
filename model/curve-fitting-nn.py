@@ -190,6 +190,11 @@ class CurveFitter:
 
         # Number of iterations per epoch is given by the batch size
         n_iter_epoch = np.ceil(self.n_train / batch_size)
+        # Tau: number of total iterations = floor(epochs * n_train / batch size)
+        tau = np.ceil(n_epochs * self.n_train / batch_size)
+
+        # matrix to store (in each column) the average gradient over each batch
+        batch_gradients = np.zeros((self.n_params, n_iter_epoch))
 
         for i in range(self.n_train):
             y_curr[i], v = self.forward(self.x_train[i])
@@ -198,19 +203,32 @@ class CurveFitter:
         mse_curr = mse(self.y_train, y_curr)  # Epoch 0 MSE
         curr_grad = np.zeros(self.w.shape)
 
-        for i in range(n_iter_epoch):
-            grad_sum = np.zeros(self.w.shape)
-            self.mse_per_epoch.append(mse_curr)
-            for j in range(batch_size):
-                # For each batch, evaluate the gradients, then average and update w
-                curr_index = i * batch_size + j
-                y, v = self.forward(self.x_train[curr_index])
-                y_curr[curr_index] = y
-                grad_sum = self.grad(
-                    self.x_train[curr_index], self.y_train[curr_index], y, v
-                )
+        for epoch in range(n_epochs):
+            # For each epoch:
+            for i in range(n_iter_epoch):
+                # Iterate over batches (last one may not be full)
+                grad_sum = np.zeros(self.w.shape)
+                self.mse_per_epoch.append(mse_curr)
+                actual_batch_size = 0
+                for j in range(batch_size):
+                    # curr_index points at the j-th element of batch i
+                    curr_index = i * batch_size + j
+                    if (
+                        curr_index < self.x_train.shape[0]
+                    ):  # Check is needed because last batch may not be full
+                        actual_batch_size += 1
+                        y, v = self.forward(self.x_train[curr_index])
+                        y_curr[curr_index] = y
+                        grad_sum = self.grad(
+                            self.x_train[curr_index], self.y_train[curr_index], y, v
+                        )
 
-            grad_sum /= batch_size
+                avg_grad_batch = grad_sum / actual_batch_size
+                batch_gradients[:, i] = grad_sum
+
+                self.w = self.w - self.eta * avg_grad_batch
+
+                # NOTE: HERE
 
     def grad(self, x: float, d: float, y: float, v: np.ndarray) -> np.ndarray:
         """
