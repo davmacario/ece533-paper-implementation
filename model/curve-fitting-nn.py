@@ -130,6 +130,8 @@ class CurveFitter:
         if self._train_init:
             warnings.warn("Overwriting existing training set!")
 
+        assert len(x_train) == len(y_train), "x and y must be equal length"
+        self.n_train = len(x_train)
         self.x_train = x_train
         self.y_train = y_train
         self._train_init = True
