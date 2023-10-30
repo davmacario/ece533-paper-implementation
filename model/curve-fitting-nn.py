@@ -1,9 +1,11 @@
-import random
 import numpy as np
 import matplotlib.pyplot as plt
 import os
 from typing import Callable
 import warnings
+
+from sub.utilities import loadingBar
+from sub.config import VERB
 
 
 def tanh_prime(x):
@@ -26,17 +28,6 @@ def mse(d: np.ndarray, y: np.ndarray) -> float:
     return (1 / n) * np.sum((d - y) ** 2)
 
 
-def targetFunction(x: float) -> float:
-    """
-    targetFunction
-    ---
-    Sample function to be approximated by the model.
-
-    $ y = \sin{(20x)} + 3x$
-    """
-    return np.sin(20 * x) + 3 * x
-
-
 class CurveFitter:
     """
     CurveFitter
@@ -47,7 +38,7 @@ class CurveFitter:
     def __init__(
         self,
         n_neurons_hidden: int,
-        target_function: Callable = targetFunction,
+        target_function: Callable = None,
         act_func: Callable = np.tanh,
         act_func_deriv: Callable = tanh_prime,
     ):
@@ -64,11 +55,13 @@ class CurveFitter:
         self.n_params = 3 * self.n_hidden + 1  # Number of network parameters
 
         # Initialized weights:
-        self.w = np.random.normal(0, 1, (self.n_params))
+        self.w = np.random.normal(0, 1, (self.n_params, 1))
         # Activation function:
         self.phi = act_func
+        self.phi_prime = act_func_deriv
 
         # Target function - to be approximated
+        # NOTE: it can be None
         self.target = target_function
 
         self._train_init = False  # True if the training set was initialized
@@ -83,6 +76,7 @@ class CurveFitter:
         self.batch_size = 0  # If set to 1, the update is 'online'
 
         self.eta = None
+        self.mse_per_epoch = None
 
     def createTrainSet(self, n_train: int) -> [np.ndarray, np.ndarray]:
         """
@@ -113,7 +107,7 @@ class CurveFitter:
         self.x_train = np.random.uniform(0, 1, (self.n_train, 1))
         self._noise = np.random.uniform(-0.1, 0.1, (self.n_train, 1))
 
-        self.y_train = self.target(self.x_train) + self.noise
+        self.y_train = self.target(self.x_train) + self._noise
         self._train_init = True
 
         return self.x_train, self.y_train
@@ -158,7 +152,9 @@ class CurveFitter:
         else:
             raise ValueError("The learning rate must be strictly positive")
 
-    def train(self, n_epochs: int, batch_size: int = 1, norm: bool = False):
+    def train(
+        self, n_epochs: int, learn_rate: float, batch_size: int = 1, norm: bool = False
+    ):
         """
         train
         ---
@@ -178,6 +174,8 @@ class CurveFitter:
         # TODO: checks
         self.checkTrainInit()
 
+        self.setLearningRate(learn_rate)
+
         if self.batch_size != 0 and batch_size != self.batch_size:
             warnings.warn("The batch size changed!")
 
@@ -188,8 +186,8 @@ class CurveFitter:
             (self.n_train, self.n_hidden)
         )  # Intermediate values (for backpropagation)
 
-        # Number of iterations per epoch is given by the batch size
-        n_iter_epoch = np.ceil(self.n_train / batch_size)
+        # Number of iterations per epoch (= number of batches)
+        n_iter_epoch = int(np.ceil(self.n_train / batch_size))
         # Tau: number of total iterations = floor(epochs * n_train / batch size)
         tau = np.ceil(n_epochs * self.n_train / batch_size)
 
@@ -202,9 +200,18 @@ class CurveFitter:
 
         mse_curr = mse(self.y_train, y_curr)  # Epoch 0 MSE
         curr_grad = np.zeros(self.w.shape)
+        self.mse_per_epoch = []
 
         for epoch in range(n_epochs):
             # For each epoch:
+            if VERB:
+                prt_str = (
+                    f"{loadingBar(epoch, n_epochs, 30)} {epoch} / {n_epochs} epochs"
+                )
+                print(
+                    prt_str,
+                    end="\r",
+                )
             for i in range(n_iter_epoch):
                 # Iterate over batches (last one may not be full)
                 grad_sum = np.zeros(self.w.shape)
@@ -219,16 +226,19 @@ class CurveFitter:
                         actual_batch_size += 1
                         y, v = self.forward(self.x_train[curr_index])
                         y_curr[curr_index] = y
-                        grad_sum = self.grad(
+                        grad_sum += self.grad(
                             self.x_train[curr_index], self.y_train[curr_index], y, v
                         )
 
                 avg_grad_batch = grad_sum / actual_batch_size
-                batch_gradients[:, i] = grad_sum
-
+                batch_gradients[:, i] = grad_sum.squeeze()
                 self.w = self.w - self.eta * avg_grad_batch
 
-                # NOTE: HERE
+            mse_curr = mse(self.y_train, y_curr)
+
+        if VERB:
+            print(" " * (len(prt_str) + 1), end="\r")
+        return batch_gradients
 
     def grad(self, x: float, d: float, y: float, v: np.ndarray) -> np.ndarray:
         """
@@ -256,7 +266,7 @@ class CurveFitter:
         ]  # Weights of 2nd layer (to output)
         b_prime = self.w[-1]  # Weight of output
 
-        grad_mse = np.zeros((3 * self.n_hidden + 1, 1))
+        grad_mse = np.zeros(self.w.shape)
         # NOTE: derivative of output activation function is 1 (linear)
         for i in range(3 * self.n_hidden + 1):
             if i in range(0, self.n_hidden):
@@ -309,210 +319,66 @@ class CurveFitter:
 
         return y, v
 
+    def plotTrainingStats(self, img_path: str = None) -> int:
+        """
+        plotTrainingStats
+        ---
+        Plot MSE vs. epoch for last training.
 
-########################################### To be reviewed:
+        Can provide a path for the image to save it.
+        """
+        if self.mse_per_epoch is None:
+            warnings.warn("No training was launched yet!")
+            return 0
+
+        fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
+        ax.plot(list(range(len(self.mse_per_epoch))), self.mse_per_epoch)
+        ax.grid()
+        plt.title(
+            f"MSE vs. epoch, eta = {self.eta}, final MSE = {self.mse_per_epoch[-1]}"
+        )
+        ax.set_xlabel(r"epoch")
+        ax.set_ylabel(r"MSE")
+        if img_path is not None:
+            plt.savefig(os.path.join(img_path))
+        plt.show()
+        return 1
+
+    def plotTrainSet(self, img_path: str = None) -> int:
+        """
+        Plot the training set points if already assigned
+        """
+        if not self._train_init:
+            raise ValueError("Training set points have not been assigned!")
+
+        fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
+        ax.plot(self.x_train, self.y_train, "or")
+        ax.grid()
+        plt.title(f"Training points, n={self.n_train}")
+        ax.set_xlabel(r"$x_{i, \text{tr}}$")
+        ax.set_ylabel(r"$y_{i, \text{tr}}$")
+        if img_path is not None:
+            plt.savefig(img_path)
+        plt.show()
+
+        return 1
 
 
-def grad_mse(
-    x: float,
-    d: float,
-    y: float,
-    v: np.ndarray,
-    w: np.ndarray,
-    N: int,
-    phi: Callable,
-    phi_prime: Callable,
-) -> np.ndarray:
+# +------------------------ Target Function ---------------------------+
+
+
+def targetFunction(x: float) -> float:
     """
-    Evaluate the gradient of the MSE, key step of backpropagation algorithm
-
-    ### Input parameters
-    - x: individual training input
-    - d: individual training output
-    - y: output associated with weights w
-    - v: array of intermediate values (N x 1) associated with input x - dimensions are checked
-    - w: current weight vector (3N+1 x 1)
-    - N: number of neurons in the central layer
-    - phi: activation function, central layer
-    - phi_prime: derivative of activation function, central layer
-
-    ### Output variables
-    - grad_mse: (3N+1 x 1) vector containing the gradient of MSE wrt each element of w
-    """
-    assert (
-        w.shape[0] == 3 * N + 1
-    ), f"The array of weights has the wrong size; it should be {3 * N + 1} x 1"
-    try:
-        assert v.shape == (N, 1)
-    except:
-        v = v.reshape((N, 1))
-
-    b_i = w[:N]  # Biases of 1st layer
-    w_ij = w[N : 2 * N]  # Weights of 1st layer
-    w_prime_1j = w[2 * N : 3 * N]  # Weights of 2nd layer (to output)
-    b_prime = w[-1]  # Weight of output
-
-    grad_mse = np.zeros((3 * N + 1, 1))
-    # NOTE: derivative of output activation function is 1 (linear)
-    for i in range(3 * N + 1):
-        if i in range(0, N):
-            # Gradient wrt biases of neurons in 1st layer
-            grad_mse[i] = -1 * (d - y) * phi_prime(v[i]) * w_prime_1j[i]
-        elif i in range(N, 2 * N):
-            # Gradient wrt weights of neurons in second layer
-            grad_mse[i] = -1 * x * (d - y) * phi_prime(v[i - N]) * w_prime_1j[i - N]
-        elif i in range(2 * N, 3 * N):
-            # Gradient wrt weights of output neuron
-            grad_mse[i] = -1 * phi(v[i - 2 * N]) * (d - y)
-        else:
-            # Gradient wrt bias of output neuron
-            assert i == 3 * N
-            grad_mse[i] = -1 * (d - y)
-
-    return grad_mse
-
-
-def backpropagation(
-    x_init: np.ndarray,
-    d: np.ndarray,
-    eta: float,
-    N: int,
-    w: np.ndarray = None,
-    max_epoch: int = None,
-    img_folder: str = None,
-    plots: bool = False,
-) -> [np.ndarray, float]:
-    """
-    backpropagation
+    targetFunction
     ---
-    Backpropagation algorithm on 1 x N x 1 neural network, with
-    training set elements (x_i, d_i), starting with weights w.
-    This function performs centering of the training inputs (i.e.,
-    it removes the mean value before training), and returns the
-    mean among the outputs.
+    Sample function to be approximated by the model.
 
-    ### Input parameters
-    - x_init: training set inputs, non-centered
-    - d: training set outputs
-    - eta: learning coefficient
-    - N: number of perceptron in central layer (number of weights is 3N + 1)
-    - w: initial weights (if None, inintialized uniformly in [-1,1])
-    - max_epoch: maximum number of training epochs (if None, no maximum)
-    - img_folder: folder where to store images
-    - plots: flag indicating whether to display plots
-
-    ### Output parameters
-    - w: nDarray containing the trained model parameters
-    - mu_x: mean value of the provided x_init (will be needed at test)
+    $ y = \sin{(20x)} + 3x$
     """
-    assert eta > 0, "Eta must be a strictly positive value!"
-    phi = np.tanh  # Activation function of central layer
-    phi_prime = tanh_prime  # Derivative of activation function, central layer
-    n = x_init.shape[0]
+    return np.sin(10 * x) + 2 * x
 
-    # CENTER INPUTS
-    mu_x = np.mean(x_init)  # Mean value of x
-    x = x_init - mu_x  # Center training elements
 
-    if w is None:
-        w = np.random.uniform(-1, 1, (3 * N + 1, 1))
-
-    if max_epoch is None:
-        max_ind = 2
-    else:
-        max_ind = max_epoch
-
-    mse_per_epoch = []
-
-    y_curr = np.zeros((n, 1))
-    v_curr = np.zeros((n, N))  # Row contains values for element x_i
-    for i in range(n):
-        y_curr[i], v = forward(x[i], w, N, phi)
-        v_curr[i, :] = v.T
-
-    mse_curr = mse(d, y_curr)
-    epoch = 0
-    last_eta_update = 130  # Makes the 1st eta update after 200 iterations minimum
-
-    while mse_curr >= 0.005 and epoch < max_ind - 1:
-        print(f"Epoch: {epoch} - MSE: {mse_curr}")
-        mse_per_epoch.append(mse_curr)
-
-        ## Tuning learning rate
-        # Idea: perform first 200 iterations with initial eta, then try to increase it
-        # if the value of mse between the current epoch and ~70 epochs before has
-        # decreased by less than 3%
-        # Update condition (at least every 70 epochs from last):
-        update_cond = False
-        if epoch >= 70 + last_eta_update:
-            # Update eta if:
-            # 1. The MSE increases in the last iterations (take mean to
-            # prevent singular values)
-            c1 = mse_per_epoch[-1] > np.mean(mse_per_epoch[-6:-2])
-
-            # 2. The MSE does not decrease by at least 3%
-            c2 = mse_per_epoch[-1] > 0.97 * np.mean(mse_per_epoch[-75:-66])
-
-            update_cond = c1 or c2
-
-        if update_cond and eta >= 5e-4:
-            eta *= 0.95
-            last_eta_update = epoch + 1
-            print(f"> Eta decreased ({eta})")
-
-        epoch += 1
-        if max_epoch is None:  # Case no max. epochs
-            max_ind += 1
-
-        # Update weights - BP
-        for i in range(n):
-            # Update weights for every element in training set
-            y, v = forward(x[i], w, N, phi)
-            y_curr[i] = y
-            grad_mse_curr = grad_mse(
-                x[i],
-                d[i],
-                y,
-                v,
-                w,
-                N,
-                phi,
-                phi_prime,
-            )
-            w = w - eta * grad_mse_curr
-
-        mse_curr = mse(d, y_curr)
-
-    print(f"Epoch: {epoch} - MSE: {mse_curr}")
-    epoch += 1
-    mse_per_epoch.append(mse_curr)
-    if epoch == max_ind:
-        print("Early stopping")
-
-    fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
-    ax.plot(list(range(epoch)), mse_per_epoch)
-    ax.grid()
-    plt.title(f"MSE vs. epoch, eta = {eta}, final MSE = {mse_per_epoch[-1]}")
-    ax.set_xlabel(r"epoch")
-    ax.set_ylabel(r"MSE")
-    if img_folder is not None:
-        plt.savefig(os.path.join(img_folder, "mse_per_epoch.png"))
-    if plots:
-        plt.show()
-
-    # Plot derivative of mse per epoch (to find regions of max variation)
-    fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
-    ax.plot(list(range(epoch)), np.gradient(mse_per_epoch))
-    ax.grid()
-    plt.title(r"$\frac{dMSE}{dt}$ vs. epoch")
-    ax.set_xlabel(r"t")
-    ax.set_ylabel(r"$\frac{dMSE}{dt}$")
-    if img_folder is not None:
-        plt.savefig(os.path.join(img_folder, "grad_mse_per_epoch.png"))
-    if plots:
-        plt.show()
-
-    return w, mu_x
+# +--------------------------------------------------------------------+
 
 
 def main(n: int, N: int, img_folder: str, plots: bool = False):
@@ -528,31 +394,17 @@ def main(n: int, N: int, img_folder: str, plots: bool = False):
     np.random.seed(660603047)
     # np.random.seed(0)
 
-    # Draw random training elements:
-    x = np.random.uniform(0, 1, (n, 1))
-    nu = np.random.uniform(-0.1, 0.1, (n, 1))  # Random uniform noise
+    myNN = CurveFitter(N, targetFunction)
 
-    d = np.sin(20 * x) + 3 * x + nu
+    # Draw random training elements:
+    myNN.createTrainSet(n)
 
     # Plot points
-    fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
-    ax.plot(x, d, "or")
-    ax.grid()
-    plt.title(f"Training points, n={n}")
-    ax.set_xlabel(r"$x_i$")
-    ax.set_ylabel(r"$d_i$")
-    if img_folder is not None:
-        plt.savefig(os.path.join(img_folder, "training_points.png"))
-    if plots:
-        plt.show()
 
     # Launch BP algorithm
-    eta = 5e-2
-    w = np.random.normal(0, 1, (3 * N + 1, 1))  # Gaussian initialization of weights
-
-    w_0, mean_x = backpropagation(
-        x, d, eta, N, w, max_epoch=1000, img_folder=img_folder, plots=plots
-    )
+    eta = 5e-3
+    n_epochs = 600
+    grad_matrix_train = myNN.train(n_epochs, eta, 1)
 
     print("BP terminated!")
 
@@ -560,11 +412,12 @@ def main(n: int, N: int, img_folder: str, plots: bool = False):
     y_plot_est = np.zeros((1000, 1))
     for i in range(len(x_plot)):
         # Need to center the test elements
-        y_plot_est[i] = forward(x_plot[i] - mean_x, w_0, N, np.tanh)[0]
+        y = myNN.forward(x_plot[i])[0]
+        y_plot_est[i] = y
 
     fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
     ax.plot(x_plot, y_plot_est, "b", label="NN output")
-    ax.plot(x, d, "or", label="Training set")
+    ax.plot(myNN.x_train, myNN.y_train, "or", label="Training set")
     ax.grid()
     ax.legend()
     plt.title(f"Result, n={n}")
