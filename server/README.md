@@ -34,6 +34,6 @@ Where:
 
 The server provides a JSON-based REST API, with the support for the following operations:
 
-* GET + `http://<server-ip>/dataset&id=<client_id>` - Fetch the data set, given the client ID, assigned at registration.
-* POST + `http://<server-ip>/register`: used as a client to register to the server, providing in the body of the message the client information (JSON format); *the server knows the number of clients*, and will be able to provide the data set to each once all clients have been correctly registered.
-* PUT + `http://<server-ip>/updated_params&id=<client_id>`: used as a client to upload to the server the update information (accumulated gradient matrix + training parameters)
+* GET + `http://<server-ip>:<server-port>/dataset&id=<client_id>` - Fetch the data set, given the client ID, assigned at registration.
+* POST + `http://<server-ip>:<server-port>/register`: used as a client to register to the server, providing in the body of the message the client information (JSON format); *the server knows the number of clients*, and will be able to provide the data set to each once all clients have been correctly registered.
+* PUT + `http://<server-ip>:<server-port>/updated_params&id=<client_id>`: used as a client to upload to the server the update information (accumulated gradient matrix + training parameters)
