@@ -56,6 +56,7 @@ class FedNovaServer:
             raise ValueError("The number of clients needs to be >= 1")
 
         self.n_clients = n_clients
+        self.cli_map_PID = [] # elem. i contains PID of client i - append as they come
         self.cli_registered = [False] * n_clients  # elem. i true if client i registered
 
         # Import the server information dict
@@ -65,8 +66,7 @@ class FedNovaServer:
         self.saveStateJson()
 
         # Keys of the client dictionary that need to be provided at registration
-        # (probably port is not needed - need to find a way to uniquely identify them...)
-        self._cli_params = ["ip", "port", "capabilities"]  # TODO: decide the syntax
+        self._cli_params = ["PID", "capabilities"]  # TODO: decide the syntax
 
     def updateTimestamp(self) -> str:
         """
@@ -138,6 +138,7 @@ class FedNovaServer:
             self.cli_registered[new_id] = True
             # Only keep the keys specified in _cli_params:
             new_cli_info = {}
+            self.cli_map_PID.append(cl_info["PID"])
             for k in self._cli_params:
                 new_cli_info[k] = cl_info[k]
             new_cli_info["id"] = new_id
@@ -208,6 +209,8 @@ class FedNovaWebServer:
 
         GET + http://<server-ip>:<server-port>/dataset&id=<client-id> - retrieve the
         data set portion assigned to the specific client ID.
+        FIXME: clients are identified by their PID
+        FIXME: clients are identified by their PID
         """
         if len(uri) >= 1:
             if str(uri[0]) == "dataset" and "id" in params:
