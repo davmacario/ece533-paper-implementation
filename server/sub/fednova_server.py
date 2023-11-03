@@ -50,7 +50,8 @@ class FedNovaServer:
         and PUT requests.
 
         - GET: used for fetching the data set as a client (only when all
-        clients have successfully registered)
+        clients have successfully registered) and updated weights at each
+        algorithm iteration
         - POST: used for registration, providing the information in JSON
         format
         - PUT: used for uploading the local model parameter at each
@@ -82,6 +83,10 @@ class FedNovaServer:
         self.n_model_parameters = self.model.n_params
         # Model parameters vector - all clients should start from the same!
         self.curr_params = self.model.w
+
+        # Placeholders for the data set sections:
+        # Each element is the dataset for the corresponding client in JSON format
+        self.cli_data_sets = []
 
     def updateTimestamp(self) -> str:
         """
@@ -130,7 +135,7 @@ class FedNovaServer:
         # If here, client was not found
         return elem
 
-    def addClient(self, cl_info: dict) -> int:
+    def addClient(self, cl_info: dict, override_max: bool = False) -> int:
         """
         Add a new client - registration.
         The client will only be added if the PID is different from any
@@ -143,6 +148,8 @@ class FedNovaServer:
         - -1: no free IDs available (max. n. of clients has registered)
         - -2: wrong client format
         - -3: the client already registered
+        - -4: the maximum number of clients was reached, unable to add
+        (this can happen only if override_max == False [default])
         """
         new_id = self.getFreeID()
 
@@ -150,10 +157,13 @@ class FedNovaServer:
         if not self.checkValidClient(self, cl_info):
             new_id = -2
         elif self.searchClient("PID", cl_info["PID"]) != {}:
-            # if here, the client is valid, i.e., it contains "PID"
+            # if here, the client is valid, i.e., it contains "PID" and
+            # we can check for duplicates in PID
             new_id = -3
+        elif not override_max and len(self.cli_map_PID) >= self.n_clients:
+            new_id = -4
 
-        if new_id > -1:
+        if new_id >= 0:
             # Set the ID as occupied
             self.cli_registered[new_id] = True
             # Only keep the keys specified in _cli_params:
@@ -164,6 +174,11 @@ class FedNovaServer:
             new_cli_info["id"] = new_id
             new_cli_info["last_update"] = self.updateTimestamp()
             self._server_info["clients"].append(new_cli_info)
+
+            # Since the new client was added, if the required number of
+            # clients was reached, split the data set
+            if self.allCliRegistered(self):
+                self.splitTrainSet()
         return new_id
 
     def getFreeID(self) -> int:
@@ -202,6 +217,13 @@ class FedNovaServer:
         """
         Divide the training set among the different clients
         """
+        if not self.allCliRegistered():
+            raise ValueError(
+                f"Not all clients have registered! {len(self.cli_map_PID)}/{self.n_clients}"
+            )
+
+        # Find a way to divide the data set according to the client capabilitites
+        pass
 
 
 class FedNovaWebServer:
@@ -241,17 +263,20 @@ class FedNovaWebServer:
         GET + http://<server-ip>:<server-port>/dataset&id=<client-id> - retrieve the
         data set portion assigned to the specific client ID.
         FIXME: clients are identified by their PID
-        FIXME: clients are identified by their PID
         """
         if len(uri) >= 1:
             if str(uri[0]) == "dataset" and "id" in params:
                 # Ensure the user is registered
-                cli = int(params["id"])
-                if self.serv.searchClient("id", cli) == {}:
+                cli_pid = int(params["pid"])
+                client_info = self.serv.searchClient("id", cli_pid)
+                if client_info == {}:
                     # Not found!:
-                    raise cherrypy.HTTPError(f"Client {cli}")
+                    raise cherrypy.HTTPError(
+                        404, f"Client with PID = {cli_pid} not found"
+                    )
                 # Get the data set associated with the client
-                # TODO
+                cli_id = client_info["id"]
+                return json.dumps(self.serv.cli_data_sets[cli_id])
 
     def POST(self, *uri, **params):
         """
