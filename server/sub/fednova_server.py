@@ -7,7 +7,7 @@ import sys
 import time
 
 from .config import *
-from model import CurveFitter
+from model import CurveFitter, targetFunction
 
 
 class FedNovaServer:
@@ -20,6 +20,7 @@ class FedNovaServer:
         n_clients: int,
         in_json_path: str,
         out_json_path: str,
+        update_type: str = "FedNova",
     ):
         """
         FedNovaServer
@@ -39,6 +40,9 @@ class FedNovaServer:
         - in_json_path: path of the json template maintained by the server,
         which will be used to store the global information (clients,
         iterations, hyperparameters, ...)
+        - out_json_path: path where to store updated information
+        - update_type: string indicating the update rule to be used; default
+        "FedNova" (TODO: add support for "classical" FL)
 
         ### Exposed API
 
@@ -56,7 +60,7 @@ class FedNovaServer:
             raise ValueError("The number of clients needs to be >= 1")
 
         self.n_clients = n_clients
-        self.cli_map_PID = [] # elem. i contains PID of client i - append as they come
+        self.cli_map_PID = []  # elem. i contains PID of client i - append as they come
         self.cli_registered = [False] * n_clients  # elem. i true if client i registered
 
         # Import the server information dict
@@ -67,6 +71,17 @@ class FedNovaServer:
 
         # Keys of the client dictionary that need to be provided at registration
         self._cli_params = ["PID", "capabilities"]  # TODO: decide the syntax
+
+        # Model
+        self.update_rule = update_type
+        self.n_neurons_hidden = N_NEURONS_HIDDEN
+        self.n_train = N_TRAIN
+        self.model = CurveFitter(self.n_neurons_hidden, targetFunction)
+        # NOTE: maybe need to change range in training set 'x'
+        self.train_x, self.train_y = self.model.createTrainSet(self.n_train)
+        self.n_model_parameters = self.model.n_params
+        # Model parameters vector - all clients should start from the same!
+        self.curr_params = self.model.w
 
     def updateTimestamp(self) -> str:
         """
@@ -118,20 +133,25 @@ class FedNovaServer:
     def addClient(self, cl_info: dict) -> int:
         """
         Add a new client - registration.
+        The client will only be added if the PID is different from any
+        of the ones already in the system.
         The new client is assigned a unique ID, that will overwrite its
         current one, if present.
 
-        The return code will be the ID of the new client if success, -1
-        if no free IDs are left, -2 if the client info is in the wrong
-        format.
+        ### Return values
+        - [>= 0]: unique ID of the new client
+        - -1: no free IDs available (max. n. of clients has registered)
+        - -2: wrong client format
+        - -3: the client already registered
         """
         new_id = self.getFreeID()
 
         # Check for info validity
         if not self.checkValidClient(self, cl_info):
             new_id = -2
-
-        # TODO: add check to prevent duplicate clients registering at server
+        elif self.searchClient("PID", cl_info["PID"]) != {}:
+            # if here, the client is valid, i.e., it contains "PID"
+            new_id = -3
 
         if new_id > -1:
             # Set the ID as occupied
@@ -171,6 +191,17 @@ class FedNovaServer:
             if k not in list(cl_info.keys()):
                 return 0
         return 1
+
+    def allCliRegistered(self):
+        """
+        Return true if all the expected clients have registered
+        """
+        return len(self.cli_map_PID) == self.n_clients
+
+    def splitTrainSet(self):
+        """
+        Divide the training set among the different clients
+        """
 
 
 class FedNovaWebServer:
@@ -262,7 +293,7 @@ class FedNovaWebServer:
         body = json.loads(cherrypy.request.body.read())
         if len(uri) >= 1:
             if str(uri[0]) == "updated_params" and "id" in params:
-                
+                pass
 
 
 if __name__ == "__main__":
