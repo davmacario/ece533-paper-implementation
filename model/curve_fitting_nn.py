@@ -49,6 +49,10 @@ class CurveFitter:
 
         ### Input parameters
         - n_neurons_hidden: number of neurons in the hidden layer.
+        - target_function: function to be approximated; can be None, but the training cannot
+        be generated automatically
+        - act_func: activation function used in the intermediate layer; default: tanh
+        - act_func_deriv: derivative of the activation function
         """
 
         self.n_hidden = n_neurons_hidden
@@ -78,7 +82,9 @@ class CurveFitter:
         self.eta = None
         self.mse_per_epoch = None
 
-    def createTrainSet(self, n_train: int) -> [np.ndarray, np.ndarray]:
+    def createTrainSet(
+        self, n_train: int, range: tuple = (0, 1)
+    ) -> [np.ndarray, np.ndarray]:
         """
         createTrainSet
         ---
@@ -93,6 +99,8 @@ class CurveFitter:
 
         ### Input parameters
         - n_train: number of training elements.
+        - range: tuple indicating the range of the training 'x' values; default
+        (0, 1)
 
         ### Output parameters:
         - self.x_train
@@ -104,7 +112,7 @@ class CurveFitter:
             )
 
         self.n_train = n_train
-        self.x_train = np.random.uniform(0, 1, (self.n_train, 1))
+        self.x_train = np.random.uniform(range[0], range[1], (self.n_train, 1))
         self._noise = np.random.uniform(-0.1, 0.1, (self.n_train, 1))
 
         self.y_train = self.target(self.x_train) + self._noise
@@ -142,6 +150,22 @@ class CurveFitter:
             raise ValueError("The training set is not defined!")
         else:
             return 1
+
+    def assignParameters(self, w: np.ndarray):
+        """
+        assignParameters
+        ---
+        Assign specific values to the model parameters.
+
+        ### Input parameters
+        - w: ndarray containing the new model parameters; needs to be of
+        the right length
+        """
+        if len(w) != self.n_params:
+            raise ValueError(
+                f"The new vector of parameters has the wrong length!\nExpected: {self.n_params}, got: {len(w)}"
+            )
+        self.w = w.reshape((self.n_params, 1))
 
     def setLearningRate(self, learn_rate: float):
         """
