@@ -13,6 +13,13 @@ from model import CurveFitter, targetFunction
 class FedNovaServer:
     """
     FedNovaServer class
+    ---
+    ### Attributes
+    - Private:
+      - _cli_registered
+    - Public:
+      - n_clients
+    TODO
     """
 
     def __init__(
@@ -62,7 +69,9 @@ class FedNovaServer:
 
         self.n_clients = n_clients
         self.cli_map_PID = []  # elem. i contains PID of client i - append as they come
-        self.cli_registered = [False] * n_clients  # elem. i true if client i registered
+        self._cli_registered = [
+            False
+        ] * n_clients  # elem. i true if client i registered
 
         # Import the server information dict
         self._server_info = json.load(open(in_json_path))
@@ -72,21 +81,40 @@ class FedNovaServer:
 
         # Keys of the client dictionary that need to be provided at registration
         self._cli_params = ["PID", "capabilities"]  # TODO: decide the syntax
+        self._cli_capabilities_params = ["n_epochs", "batch_size", "cli_class"]
 
         # Model
+        self._valid_update_rules = ["FedNova"]
+        if not update_type in self._valid_update_rules:
+            raise ValueError(
+                f"Specified update rule {update_type} is not valid!\nValid rules are: {self._valid_update_rules}"
+            )
         self.update_rule = update_type
         self.n_neurons_hidden = N_NEURONS_HIDDEN
         self.n_train = N_TRAIN
+        self.n_tr_cli = [0] * self.n_clients
+        self.p_i = [0] * self.n_clients
+        self.tau_i = [0] * self.n_clients
+        self.tau_eff = 0
+        self.eta_global = ETA  # Learning rate for global update
         self.model = CurveFitter(self.n_neurons_hidden, targetFunction)
+        self.eta = ETA  # Learning rate for local update (NOT USED...)
+        # Clients use local learning rate!
+        self.model.setLearningRate(self.eta)
         # NOTE: maybe need to change range in training set 'x'
         self.train_x, self.train_y = self.model.createTrainSet(self.n_train)
+        self.train_split = []  # Will contain dicts with "x_tr" and "y_tr"
         self.n_model_parameters = self.model.n_params
         # Model parameters vector - all clients should start from the same!
-        self.curr_params = self.model.w
+        self.model_params = {}
+        self.model_params["weights"] = self.model.w
+        self.model_params["last_update"] = time.time()  # Used to track parameter age
+        self.n_update_iterations = 0  # Number of global model parameter updates
 
         # Placeholders for the data set sections:
         # Each element is the dataset for the corresponding client in JSON format
         self.cli_data_sets = []
+        self.cli_last_grad = [0] * n_clients
 
     def updateTimestamp(self) -> str:
         """
@@ -165,7 +193,7 @@ class FedNovaServer:
 
         if new_id >= 0:
             # Set the ID as occupied
-            self.cli_registered[new_id] = True
+            self._cli_registered[new_id] = True
             # Only keep the keys specified in _cli_params:
             new_cli_info = {}
             self.cli_map_PID.append(cl_info["PID"])
@@ -174,6 +202,9 @@ class FedNovaServer:
             new_cli_info["id"] = new_id
             new_cli_info["last_update"] = self.updateTimestamp()
             self._server_info["clients"].append(new_cli_info)
+
+            self.updateTimestamp()
+            self.saveStateJson()
 
             # Since the new client was added, if the required number of
             # clients was reached, split the data set
@@ -189,7 +220,7 @@ class FedNovaServer:
         """
         i = 0
         while i < self.n_clients:
-            if not self.cli_registered[i]:
+            if not self._cli_registered[i]:
                 return i
         return -1
 
@@ -205,6 +236,10 @@ class FedNovaServer:
         for k in self._cli_params:
             if k not in list(cl_info.keys()):
                 return 0
+        for k in self._cli_capabilities_params:
+            # Check all required capabilities are present
+            if k not in cl_info["capabilities"].keys():
+                return 0
         return 1
 
     def allCliRegistered(self):
@@ -215,15 +250,130 @@ class FedNovaServer:
 
     def splitTrainSet(self):
         """
-        Divide the training set among the different clients
+        Divide the training set among the different clients.
+        The function will raise an error if not all the required clients
+        have registered!
         """
         if not self.allCliRegistered():
             raise ValueError(
                 f"Not all clients have registered! {len(self.cli_map_PID)}/{self.n_clients}"
             )
 
-        # Find a way to divide the data set according to the client capabilitites
-        pass
+        capabilities = [
+            int(c["capabilities"]["cli_class"]) for c in self._server_info["clients"]
+        ]
+        tot_c = sum(capabilities)
+        for i in range(self.n_clients):
+            if i < self.n_clients - 1:
+                self.n_tr_cli[i] = round(self.n_train * capabilities[i] / tot_c)
+            else:
+                # This is necessary due to rounding - may lose some training elements...
+                self.n_tr_cli[i] = self.n_train - sum(self.n_tr_cli[:-1])
+            # FIXME: the following assumes clients are added in the order of their
+            # ID to the server info
+            cli_curr = self._server_info["clients"][i]
+            cli_curr["capabilities"]["n_train"] = self.n_tr_cli[i]
+            self.tau_i[i] = np.ceil(
+                cli_curr["capabilities"]["n_epochs"]
+                * self.n_tr_cli[i]
+                / cli_curr["capabilities"]["batch_size"]
+            )
+            cli_curr["capabilities"]["tau"] = self.tau_i[i]
+            # TODO: confirm this code works - are the updates on cli_curr reflected on the
+            # values in self._server_info?
+        self.p_i = [n / self.n_train for n in self.n_tr_cli]
+
+        assert sum(self.n_tr_cli) == self.n_train
+
+        ind_ds = 0
+        for i in range(self.n_clients):
+            tr_set_curr = {}
+            tr_set_curr["x_tr"] = self.train_x[ind_ds : ind_ds + self.n_tr_cli[i]]
+            tr_set_curr["y_tr"] = self.train_y[ind_ds : ind_ds + self.n_tr_cli[i]]
+            self.train_split.append(tr_set_curr)
+            ind_ds += self.n_tr_cli[i]
+
+        self.updateTimestamp()
+        self.saveStateJson()
+
+        return 1
+
+    def initTauEff(self):
+        """Evaluate tau_eff for FedNova update rule, based on the clients parameters"""
+        self.tau_eff
+
+    def addGradientMatrix(self, grad_mat: np.ndarray, user_pid: int) -> int:
+        """
+        Add the result of the last iteration of the client identified by
+        the specific PID.
+        The information is stored in attribute `cli_last_grad` in the position
+        associated with the client ID.
+
+        ### Input parameters
+        - grad_mat: matrix of gradients resulting from the last update
+        at the client
+        - user_pid: PID of the client (can uniquely identify him)
+
+        ### Return value(s)
+        - 1 if successful update
+        """
+        if user_pid not in self.cli_map_PID:
+            raise ValueError(f"PID {user_pid} not found among registered clients!")
+
+        cli = self.searchClient("pid", user_pid)
+        cli_id = cli["id"]
+        tau_cli = grad_mat.shape[1]
+        a = np.ones((tau_cli, 1))  # FIXME: can be modified...
+        norm_a = np.linalg.norm(a)
+        norm_batch_grad = np.dot(grad_mat, a) / norm_a
+        self.cli_last_grad[cli_id] = norm_batch_grad.reshape((len(norm_batch_grad), 1))
+
+        return 1
+
+    def updateWeights(self) -> int:
+        """
+        Update the model parameters using the specified rule.
+        This requires that every client has concluded its local iteration,
+        i.e., that `cli_last_grad` is filled.
+
+        Once the update is performed, the weights of the model are updated
+        and the clients can get them to proceed with the next iteration.
+
+        ### Ouptut value
+        - 0 if not ready (missing local updates), 1 if success
+        """
+        assert self.update_rule in self._valid_update_rules  # Shouldn't need it
+
+        if self.update_rule.lower() == "fednova":
+            if not all(self.cli_last_grad != 0):
+                # Some local updates are missing! Wait for them
+                return 0
+            else:
+                # To perform global update need:
+                # - tau_eff
+                # - p_i
+                # Can perform global update
+                sum_upd = 0
+                for i in range(self.n_clients):
+                    sum_upd += (
+                        self.ds_fraction[i] * self.eta_global * self.cli_last_grad[i]
+                    )
+                self.model_params["weights"] = self.params - self.tau_eff * sum_upd
+                self.model_params["last_update"] = time.time()
+                # Reset the normalized local gradients for next global iteration
+                self.cli_last_grad = [0] * self.n_clients
+
+                return 1
+        else:
+            raise ValueError(f"Unsupported update rule {self.update_rule}!")
+
+    def getIP(self) -> str:
+        """Return IP address contained in the server information"""
+        return self._server_info["ip"]
+
+    def getPort(self) -> int:
+        """Return port number contained in the server information"""
+        return self._server_info["port"]
 
 
 class FedNovaWebServer:
@@ -250,6 +400,15 @@ class FedNovaWebServer:
         with open(cmd_list_path) as f:
             self.api = json.load(f)
 
+        self.ip = self.serv.getIP()
+        self.port = self.serv.getPort()
+        self.ws_config = {
+            "/": {
+                "request.dispatch": cherrypy.dispatch.MethodDispatcher(),
+                "tools.sessions.on": True,
+            }
+        }
+
         # Default messages:
         self.msg_ok = {"status": "SUCCESS", "msg": "", "params": {}}
         self.msg_ko = {"status": "FAILURE", "msg": "", "params": {}}
@@ -260,15 +419,19 @@ class FedNovaWebServer:
         ---
         ### Syntax
 
-        GET + http://<server-ip>:<server-port>/dataset&id=<client-id> - retrieve the
-        data set portion assigned to the specific client ID.
+        - GET + `http://<server-ip>:<server-port>/dataset&pid=<client-pid>` - retrieve the
+        data set portion assigned to the specific client PID.
+        - GET + `http://<server-ip>:<server-port>/weights` - retrieve the most recent version
+        of the global weights; the returned JSON-formatted string also contains the last
+        update timestamp to help comparing with the current local version at the client
+
         FIXME: clients are identified by their PID
         """
         if len(uri) >= 1:
-            if str(uri[0]) == "dataset" and "id" in params:
+            if str(uri[0]) == "dataset" and "pid" in params:
                 # Ensure the user is registered
                 cli_pid = int(params["pid"])
-                client_info = self.serv.searchClient("id", cli_pid)
+                client_info = self.serv.searchClient("pid", cli_pid)
                 if client_info == {}:
                     # Not found!:
                     raise cherrypy.HTTPError(
@@ -276,7 +439,9 @@ class FedNovaWebServer:
                     )
                 # Get the data set associated with the client
                 cli_id = client_info["id"]
-                return json.dumps(self.serv.cli_data_sets[cli_id])
+                return json.dumps(self.serv.train_split[cli_id])
+            elif str(uri[0]) == "weights":
+                return json.dumps(self.serv.model_params)
 
     def POST(self, *uri, **params):
         """
@@ -296,6 +461,7 @@ class FedNovaWebServer:
                     out["msg"] = f"Client {ret_code_add} was added"
                     # The new client ID is returned in the response message
                     out["params"]["id"] = ret_code_add
+                    out["params"]["pid"] = body["pid"]
                     self.serv.saveStateJson()
                     cherrypy.response.status = 201
                     return json.dumps(out)
@@ -303,8 +469,12 @@ class FedNovaWebServer:
                     # Failed to add client
                     out = self.msg_ko.copy()
                     out["msg"] = f"Unable to add client!"
+                    out["params"]["ret_code"] = ret_code_add  # Help in debug
                     cherrypy.response.status = 400
                     return json.dumps(out)
+            if str(uri[0]) == "update" and "pid" in params:
+                # TODO: Add possibility to update records
+                pass
 
     def PUT(self, *uri, **params):
         """
@@ -317,8 +487,24 @@ class FedNovaWebServer:
         """
         body = json.loads(cherrypy.request.body.read())
         if len(uri) >= 1:
-            if str(uri[0]) == "updated_params" and "id" in params:
+            if str(uri[0]) == "updated_params" and "pid" in params:
                 pass
+
+
+def main():
+    webserver = FedNovaWebServer(N_CLIENTS)
+
+    cherrypy.tree.mount(webserver, "/", webserver.ws_config)
+    cherrypy.config.update(
+        {"server.socket_host": webserver.ip, "server.socket_port": webserver.port}
+    )
+    cherrypy.engine.start()
+
+    try:
+        while True:
+            time.sleep(10)
+    except KeyboardInterrupt:
+        cherrypy.engine.stop()
 
 
 if __name__ == "__main__":
