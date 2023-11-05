@@ -17,14 +17,20 @@ class ClientNode:
     current_grad_matrix = np.array([])
 
     def __init__(self, server_port):
+        """ tell the new client node what port 
+            the server is active on """
         self.server_port = server_port
         self.addr += (self.server_port + "/")
     def register_with_server(self):
+        """ send post request to register as a client
+            with the current open server """
         print(f"{self.PID}: registering with server")
         r = requests.post(self.addr, data={'pid':self.PID})
         if r.status_code != 200:
             raise Exception(f"{self.PID}: bad response from server on client registration")
     def request_data_from_server(self):
+        """ send a get request to receive allocated data 
+            to do local training on from the server """
         print(f"{self.PID}: requesting data - round {self.num_rounds}")
         # blocks until we get data from server
         r = requests.get(self.addr + f"dataset&pid={self.PID}")
@@ -40,6 +46,8 @@ class ClientNode:
             raise e
         return t_x, t_y
     def train_with_new_data(self, t_x, t_y):
+        """ class method to do the training of current 
+            local model and store the local gradients """
         current_weights = self.client_model.w
         self.client_model.assignTrainSet(t_x, t_y)
         start_time = time.time()
@@ -50,7 +58,9 @@ class ClientNode:
         json_obj = json.dumps(json_dict)
         return json_obj
     def send_data_to_server(self, json_obj):
-        r = requests.post(self.addr + f"datacollect&pid={self.PID}",json=json_obj)
+        """ send a put request to give the local gradients 
+            back to the server """
+        r = requests.put(self.addr + f"datacollect&pid={self.PID}",json=json_obj)
         if r.status_code != 200:
             raise Exception(f"{self.PID} bad response from server on send data - round {self.num_rounds}")
         self.num_rounds += 1
