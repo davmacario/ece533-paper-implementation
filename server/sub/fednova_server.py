@@ -5,6 +5,7 @@ import numpy as np
 import os
 import sys
 import time
+import warnings
 
 from .config import *
 from model import CurveFitter, targetFunction
@@ -163,7 +164,7 @@ class FedNovaServer:
         # If here, client was not found
         return elem
 
-    def addClient(self, cl_info: dict, override_max: bool = False) -> int:
+    def addClient(self, cl_info: dict) -> int:
         """
         Add a new client - registration.
         The client will only be added if the PID is different from any
@@ -176,8 +177,6 @@ class FedNovaServer:
         - -1: no free IDs available (max. n. of clients has registered)
         - -2: wrong client format
         - -3: the client already registered
-        - -4: the maximum number of clients was reached, unable to add
-        (this can happen only if override_max == False [default])
         """
         new_id = self.getFreeID()
 
@@ -185,11 +184,9 @@ class FedNovaServer:
         if not self.checkValidClient(self, cl_info):
             new_id = -2
         elif self.searchClient("PID", cl_info["PID"]) != {}:
-            # if here, the client is valid, i.e., it contains "PID" and
-            # we can check for duplicates in PID
+            # if here, the client is valid, i.e., it contains "PID", but
+            # the value results already registered
             new_id = -3
-        elif not override_max and len(self.cli_map_PID) >= self.n_clients:
-            new_id = -4
 
         if new_id >= 0:
             # Set the ID as occupied
@@ -302,7 +299,9 @@ class FedNovaServer:
         """Evaluate tau_eff for FedNova update rule, based on the clients parameters"""
         self.tau_eff
 
-    def addGradientMatrix(self, grad_mat: np.ndarray, user_pid: int) -> int:
+    def addGradientMatrix(
+        self, grad_mat: np.ndarray, user_val: int, attr_key: str = "pid"
+    ) -> int:
         """
         Add the result of the last iteration of the client identified by
         the specific PID.
@@ -312,18 +311,24 @@ class FedNovaServer:
         ### Input parameters
         - grad_mat: matrix of gradients resulting from the last update
         at the client
-        - user_pid: PID of the client (can uniquely identify him)
+        - user_val: value identifying the client
+        - attr_key: key associated with the value (default: "pid")
 
         ### Return value(s)
         - 1 if successful update
         """
-        if user_pid not in self.cli_map_PID:
-            raise ValueError(f"PID {user_pid} not found among registered clients!")
+        if attr_key == "pid" and user_val not in self.cli_map_PID:
+            raise ValueError(f"PID {user_val} not found among registered clients!")
+        elif attr_key == "id" and (user_val < 0 or user_val >= self.n_clients):
+            raise ValueError(f"Invalid user ID {user_val}")
 
-        cli = self.searchClient("pid", user_pid)
+        cli = self.searchClient(attr_key, user_val)
+        if cli == {}:
+            warnings.warn(f"Unable to find client with {attr_key} = {user_val}")
+            return 0
         cli_id = cli["id"]
         tau_cli = grad_mat.shape[1]
-        a = np.ones((tau_cli, 1))  # FIXME: can be modified...
+        a = np.ones((tau_cli, 1))  # FIXME: can be modified for different updates
         norm_a = np.linalg.norm(a)
         norm_batch_grad = np.dot(grad_mat, a) / norm_a
         self.cli_last_grad[cli_id] = norm_batch_grad.reshape((len(norm_batch_grad), 1))
@@ -395,12 +400,31 @@ class FedNovaWebServer:
         cmd_list_path: str = os.path.join(
             os.path.dirname(__file__), "fednova_API.json"
         ),
+        public: bool = False,
     ):
+        """
+        FedNovaWebServer
+        ---
+        Create web server for Federated Learning using FedNova paradigm.
+
+        ### Input parameters
+        - n_clients: number of required clients
+        - in_json_path: path of the input JSON containing server information
+        - out_json_path: path of the output JSON
+        - cmd_list_path: list of the JSON file containing the API definitions
+        - public: flag to choose whether to make server publicly accessible (from
+        any network interface of the host)
+        """
         self.serv = FedNovaServer(n_clients, in_json_path, out_json_path)
         with open(cmd_list_path) as f:
-            self.api = json.load(f)
+            self.API = json.load(f)
 
         self.ip = self.serv.getIP()
+        # Webserver will accept connections from any address
+        if public:
+            self.ip_out = "0.0.0.0"
+        else:
+            self.ip_out = self.ip
         self.port = self.serv.getPort()
         self.ws_config = {
             "/": {
@@ -440,8 +464,23 @@ class FedNovaWebServer:
                 # Get the data set associated with the client
                 cli_id = client_info["id"]
                 return json.dumps(self.serv.train_split[cli_id])
+            elif str(uri[0]) == "dataset" and "id" in params:
+                # Ensure the user is registered
+                cli_id = int(params["id"])
+                # Necessary to prevent wrong ID range
+                client_info = self.serv.searchClient("id", cli_pid)
+                if client_info == {}:
+                    # Not found!:
+                    raise cherrypy.HTTPError(
+                        404, f"Client with ID = {cli_id} not found"
+                    )
+                # Get the data set associated with the client
+                return json.dumps(self.serv.train_split[cli_id])
             elif str(uri[0]) == "weights":
                 return json.dumps(self.serv.model_params)
+        else:
+            # Default return value: dump of API definition JSON file
+            return "Available commands:\n" + json.dumps(self.API["methods"][0])
 
     def POST(self, *uri, **params):
         """
@@ -465,15 +504,32 @@ class FedNovaWebServer:
                     self.serv.saveStateJson()
                     cherrypy.response.status = 201
                     return json.dumps(out)
-                else:
-                    # Failed to add client
+                elif ret_code_add == -1:
+                    # Required number reached
                     out = self.msg_ko.copy()
-                    out["msg"] = f"Unable to add client!"
+                    out["msg"] = f"Unable to add client! Max. number of clients reached"
                     out["params"]["ret_code"] = ret_code_add  # Help in debug
                     cherrypy.response.status = 400
                     return json.dumps(out)
+                elif ret_code_add == -2:
+                    # Invalid info syntax
+                    out = self.msg_ko.copy()
+                    out["msg"] = f"Unable to add client! Invalid client information"
+                    out["params"]["ret_code"] = ret_code_add  # Help in debug
+                    cherrypy.response.status = 400
+                    return json.dumps(out)
+                elif ret_code_add == -3:
+                    # Client already registered
+                    out = self.msg_ko.copy()
+                    out["msg"] = f"Unable to add client! Client already registered"
+                    out["params"]["ret_code"] = ret_code_add  # Help in debug
+                    cherrypy.response.status = 400
+                    return json.dumps(out)
+
             if str(uri[0]) == "update" and "pid" in params:
-                # TODO: Add possibility to update records
+                # TODO: Add possibility to update records - use HTTP code 200
+                pass
+            elif str(uri[0]) == "update" and "id" in params:
                 pass
 
     def PUT(self, *uri, **params):
@@ -485,10 +541,43 @@ class FedNovaWebServer:
         http://<server-ip>:<server-port>/updated_params&id=<client_id> - upload the
         updated parameters (in the message body) to the server after a local iteration.
         """
+        # Body should contain attribute "gradients", with list of
+        # all values (columns are gradients)
         body = json.loads(cherrypy.request.body.read())
+        gradients_mat = np.array(body["gradients"])
         if len(uri) >= 1:
             if str(uri[0]) == "updated_params" and "pid" in params:
-                pass
+                pid_cli = int(params["pid"])
+                res = self.serv.addGradientMatrix(gradients_mat, pid_cli)
+                if res == 1:
+                    # Success
+                    out = self.msg_ok.copy()
+                    out[
+                        "msg"
+                    ] = f"Updated gradients matrix for client with pid = {pid_cli}!"
+                    cherrypy.response.status = 200
+                    return json.dumps(out)
+                else:
+                    # Fail
+                    out = self.msg_ko.copy()
+                    out["msg"] = f"Client with pid = {pid_cli} does not exist!"
+                    cherrypy.response.status = 400
+            elif str(uri[0]) == "updated_params" and "id" in params:
+                id_cli = int(params(["id"]))
+                res = self.serv.addGradientMatrix(gradients_mat, id_cli, "id")
+                if res == 1:
+                    # Success
+                    out = self.msg_ok.copy()
+                    out[
+                        "msg"
+                    ] = f"Updated gradients matrix for client with pid = {id_cli}!"
+                    cherrypy.response.status = 200
+                    return json.dumps(out)
+                else:
+                    # Fail
+                    out = self.msg_ko.copy()
+                    out["msg"] = f"Client with pid = {id_cli} does not exist!"
+                    cherrypy.response.status = 400
 
 
 def main():
@@ -496,7 +585,7 @@ def main():
 
     cherrypy.tree.mount(webserver, "/", webserver.ws_config)
     cherrypy.config.update(
-        {"server.socket_host": webserver.ip, "server.socket_port": webserver.port}
+        {"server.socket_host": webserver.ip_out, "server.socket_port": webserver.port}
     )
     cherrypy.engine.start()
 
