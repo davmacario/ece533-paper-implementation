@@ -1,6 +1,6 @@
 {
     "ip": "",
-    "port": 0,
+    "port": 8088,
     "clients": [],
     "parameters": {
         "eta": 0
