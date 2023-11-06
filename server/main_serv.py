@@ -1,5 +1,5 @@
-import numpy as np
-import cherrypy as cp
-import os
-from typing import Callable
-import warnings
+from sub.fednova_server import *
+from sub.config import *
+
+if __name__ == "__main__":
+    main()
