@@ -36,7 +36,7 @@ Where:
 The server provides a JSON-based REST API, with support for the following operations:
 
 * GET
-  * `http://<server-ip>:<server-port>/dataset&id=<client_id>` - Fetch the data set, given the client ID, assigned at registration.
-  * `http://<server-ip>:<server-port>/weights&id=<client_id>` - Fetch the current most recent global weights model.
+  * `http://<server-ip>:<server-port>/dataset&id=<client_pid>` - Fetch the data set, given the client PID, assigned at registration.
+  * `http://<server-ip>:<server-port>/weights` - Fetch the current most recent global weights model.
 * POST + `http://<server-ip>:<server-port>/register`: used as a client to register to the server, providing in the body of the message the client information (JSON format); *the server knows the number of clients*, and will be able to provide the data set to each once all clients have been correctly registered.
-* PUT + `http://<server-ip>:<server-port>/updated_params&id=<client_id>`: used as a client to upload to the server the updated information (accumulated gradient matrix + training parameters).
+* PUT + `http://<server-ip>:<server-port>/updated_params&id=<client_pid>`: used as a client to upload to the server the updated information (accumulated gradient matrix + training parameters).
