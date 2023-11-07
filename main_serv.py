@@ -1,5 +1,4 @@
-from server.sub.fednova_server import *
-from server.sub.config import *
+import server.sub.fednova_server as fn_server
 
 if __name__ == "__main__":
-    main()
+    fn_server.main()
