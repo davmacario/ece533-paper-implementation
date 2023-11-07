@@ -21,6 +21,8 @@ class ClientNode:
             the server is active on """
         self.server_port = server_port
         self.addr += (self.server_port + "/")
+        print(f"starting client: PID {self.PID}")
+
     def register_with_server(self):
         """ send post request to register as a client
             with the current open server """

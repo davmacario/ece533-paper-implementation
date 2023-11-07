@@ -49,6 +49,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     print("error sending json")
         self.end_headers()
 
+
 # Create the server
 with socketserver.TCPServer(("127.0.0.1", port), CustomHandler) as httpd:
     print(f"Server started on port {port}")
