@@ -81,7 +81,9 @@ class FedNovaServer:
         self.saveStateJson()
 
         # Keys of the client dictionary that need to be provided at registration
-        self._cli_params = ["PID", "capabilities"]  # TODO: decide the syntax
+        self._cli_params_input = ["pid", "capabilities"]  # TODO: decide the syntax
+        # Keys of the client dictionary after registration (add "id")
+        self._cli_params = ["id", "pid", "capabilities"]
         self._cli_capabilities_params = ["n_epochs", "batch_size", "cli_class"]
 
         # Model
@@ -105,10 +107,11 @@ class FedNovaServer:
         # NOTE: maybe need to change range in training set 'x'
         self.train_x, self.train_y = self.model.createTrainSet(self.n_train)
         self.train_split = []  # Will contain dicts with "x_tr" and "y_tr"
+        self.train_split_send = []  # Will contain the 'list' version of the datasets
         self.n_model_parameters = self.model.n_params
         # Model parameters vector - all clients should start from the same!
         self.model_params = {}
-        self.model_params["weights"] = self.model.w
+        self.model_params["weights"] = self.model.w.tolist()
         self.model_params["last_update"] = time.time()  # Used to track parameter age
         self.n_update_iterations = 0  # Number of global model parameter updates
 
@@ -146,7 +149,7 @@ class FedNovaServer:
 
         ### Input parameters
         - key: string indicating the parameter to be looked for
-        (needs to be included in self._cli_params)
+        (needs to be included in self._cli_params_input)
         - value: the value associated with the key to be looked for
 
         ### Output parameters
@@ -162,7 +165,7 @@ class FedNovaServer:
                 elem = cli.copy()
                 return elem
         # If here, client was not found
-        return elem
+        return {}
 
     def addClient(self, cl_info: dict) -> int:
         """
@@ -181,9 +184,11 @@ class FedNovaServer:
         new_id = self.getFreeID()
 
         # Check for info validity
-        if not self.checkValidClient(self, cl_info):
+        if DEBUG:
+            print(cl_info)
+        if not self.checkValidClient(cl_info):
             new_id = -2
-        elif self.searchClient("PID", cl_info["PID"]) != {}:
+        elif self.searchClient("pid", cl_info["pid"]) != {}:
             # if here, the client is valid, i.e., it contains "PID", but
             # the value results already registered
             new_id = -3
@@ -191,10 +196,10 @@ class FedNovaServer:
         if new_id >= 0:
             # Set the ID as occupied
             self._cli_registered[new_id] = True
-            # Only keep the keys specified in _cli_params:
+            # Only keep the keys specified in _cli_params_input:
             new_cli_info = {}
-            self.cli_map_PID.append(cl_info["PID"])
-            for k in self._cli_params:
+            self.cli_map_PID.append(cl_info["pid"])
+            for k in self._cli_params_input:
                 new_cli_info[k] = cl_info[k]
             new_cli_info["id"] = new_id
             new_cli_info["last_update"] = self.updateTimestamp()
@@ -205,7 +210,7 @@ class FedNovaServer:
 
             # Since the new client was added, if the required number of
             # clients was reached, split the data set
-            if self.allCliRegistered(self):
+            if self.allCliRegistered():
                 self.splitTrainSet()
         return new_id
 
@@ -219,18 +224,20 @@ class FedNovaServer:
         while i < self.n_clients:
             if not self._cli_registered[i]:
                 return i
+            i += 1
         return -1
 
     def checkValidClient(self, cl_info: dict) -> int:
         """
         Check whether the new client information is in the valid format,
         i.e., all the required keys are present.
+        (Attribute: self._cli_params_input)
 
         ### Output parameters
         - 1 if good syntax
         - 0 if missing keys
         """
-        for k in self._cli_params:
+        for k in self._cli_params_input:
             if k not in list(cl_info.keys()):
                 return 0
         for k in self._cli_capabilities_params:
@@ -288,6 +295,11 @@ class FedNovaServer:
             tr_set_curr["x_tr"] = self.train_x[ind_ds : ind_ds + self.n_tr_cli[i]]
             tr_set_curr["y_tr"] = self.train_y[ind_ds : ind_ds + self.n_tr_cli[i]]
             self.train_split.append(tr_set_curr)
+            # Create the "JSON-friendly" version of the dataset
+            tr_set_curr_send = {}
+            tr_set_curr_send["x_tr"] = tr_set_curr["x_tr"].tolist()
+            tr_set_curr_send["y_tr"] = tr_set_curr["y_tr"].tolist()
+            self.train_split_send.append(tr_set_curr_send)
             ind_ds += self.n_tr_cli[i]
 
         self.updateTimestamp()
@@ -363,7 +375,8 @@ class FedNovaServer:
                     sum_upd += (
                         self.ds_fraction[i] * self.eta_global * self.cli_last_grad[i]
                     )
-                self.model_params["weights"] = self.params - self.tau_eff * sum_upd
+                self.model.w = self.params - self.tau_eff * sum_upd
+                self.model_params["weights"] = self.model.w.tolist()
                 self.model_params["last_update"] = time.time()
                 # Reset the normalized local gradients for next global iteration
                 self.cli_last_grad = [0] * self.n_clients
@@ -463,21 +476,26 @@ class FedNovaWebServer:
                     )
                 # Get the data set associated with the client
                 cli_id = client_info["id"]
-                return json.dumps(self.serv.train_split[cli_id])
+                return json.dumps(self.serv.train_split_send[cli_id])
             elif str(uri[0]) == "dataset" and "id" in params:
                 # Ensure the user is registered
                 cli_id = int(params["id"])
                 # Necessary to prevent wrong ID range
-                client_info = self.serv.searchClient("id", cli_pid)
+                client_info = self.serv.searchClient("id", cli_id)
                 if client_info == {}:
                     # Not found!:
                     raise cherrypy.HTTPError(
                         404, f"Client with ID = {cli_id} not found"
                     )
                 # Get the data set associated with the client
-                return json.dumps(self.serv.train_split[cli_id])
+                return json.dumps(self.serv.train_split_send[cli_id])
             elif str(uri[0]) == "weights":
+                # Need to format (JSON) the weights array:
                 return json.dumps(self.serv.model_params)
+            else:
+                raise cherrypy.HTTPError(
+                    404, "Available commands:\n" + json.dumps(self.API["methods"][0])
+                )
         else:
             # Default return value: dump of API definition JSON file
             return "Available commands:\n" + json.dumps(self.API["methods"][0])
@@ -492,6 +510,8 @@ class FedNovaWebServer:
         as a new client; the server will return the client ID.
         """
         body = json.loads(cherrypy.request.body.read())
+        if DEBUG:
+            print(body)
         if len(uri) >= 1:
             if str(uri[0]) == "register":
                 ret_code_add = self.serv.addClient(body)

@@ -3,8 +3,8 @@
         {
             "method": "GET",
             "available_commands": {
-                "/dataset&pid=<client_pid>": "Request the local training set data given the client PID",
-                "/dataset&id=<client_id>": "Request the local training set data given the client ID",
+                "/dataset?pid=<client_pid>": "Request the local training set data given the client PID",
+                "/dataset?id=<client_id>": "Request the local training set data given the client ID",
                 "/weights": "Request the latest global weights (with timestamp)"
             }
         },
@@ -12,15 +12,15 @@
             "method": "POST",
             "available_commands": {
                 "/register": "Add new client information to the server",
-                "/update&pid=<client_pid>": "Update the client information given PID",
-                "/update&id=<client_id>": "Update the client information given ID"
+                "/update?pid=<client_pid>": "Update the client information given PID",
+                "/update?id=<client_id>": "Update the client information given ID"
             }
         },
         {
             "method": "PUT",
             "available_commands": {
-                "/updated_params&pid=<client_pid>": "Send the updated local parameters (matrix of gradients) to the central server, by PID",
-                "/updated_params&pid=<client_id>": "Send the updated local parameters (matrix of gradients) to the central server, by ID"
+                "/updated_params?pid=<client_pid>": "Send the updated local parameters (matrix of gradients) to the central server, by PID",
+                "/updated_params?pid=<client_id>": "Send the updated local parameters (matrix of gradients) to the central server, by ID"
             }
         }
     ]
