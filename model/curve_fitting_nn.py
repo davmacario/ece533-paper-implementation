@@ -4,8 +4,12 @@ import os
 from typing import Callable
 import warnings
 
-from sub.utilities import loadingBar
-from sub.config import VERB
+try:
+    from sub.utilities import loadingBar
+    from sub.config import VERB
+except:
+    from model.sub.utilities import loadingBar
+    from model.sub.config import VERB
 
 
 def tanh_prime(x):
