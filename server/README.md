@@ -36,7 +36,31 @@ Where:
 The server provides a JSON-based REST API, with support for the following operations:
 
 * GET
-  * `http://<server-ip>:<server-port>/dataset&id=<client_pid>` - Fetch the data set, given the client PID, assigned at registration.
+  * `http://<server-ip>:<server-port>/dataset?id=<client_pid>` - Fetch the data set, given the client PID, assigned at registration.
   * `http://<server-ip>:<server-port>/weights` - Fetch the current most recent global weights model.
 * POST + `http://<server-ip>:<server-port>/register`: used as a client to register to the server, providing in the body of the message the client information (JSON format); *the server knows the number of clients*, and will be able to provide the data set to each once all clients have been correctly registered.
-* PUT + `http://<server-ip>:<server-port>/updated_params&id=<client_pid>`: used as a client to upload to the server the updated information (accumulated gradient matrix + training parameters).
+* PUT + `http://<server-ip>:<server-port>/updated_params?id=<client_pid>`: used as a client to upload to the server the updated information (accumulated gradient matrix + training parameters).
+
+## Message format
+
+The general format of messages to and from the server is JSON.
+
+In particular, the server requires the following structure for the client information (sent at registration):
+[TODO - decide]
+
+* `"pid"`: PID of the client (int)
+* `"capabilities"` (dict)
+  * `"n_epochs"`: number of epochs executed locally by the client
+  * `"batch_size"`: batch size used locally
+  * `"cli_class"`: [FIX] integer in the range $[0, 10]$ which indicates the "capabilities" of the client (high value means "better" client); when splitting the data set among the clients, the server assigns a number of elements proportional to this value to each client
+
+Concerning the model variables and the data sets, the structures of the JSONs are the following.
+Model:
+
+* `"weights"`: list of weights - to convert them to Numpy arrays, simply plug them in `np.array()`, and they will be converted to a column vector (ready to be used in the model)
+* `"last_update"`: timestamp (int) used by the client to understand whether these weights are the "updated" ones - **the client should keep track of the last timestamp of the weights**
+
+Dataset:
+
+* `"x_tr"`: list containing the training $x$ values - can be converted back to Numpy array as the weights
+* `"y_tr"`: list containing the training $y$ values - can be converted back to Numpy array as the weights
