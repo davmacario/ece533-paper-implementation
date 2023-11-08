@@ -13,6 +13,28 @@ import matplotlib.pyplot as plt
 from .config import *
 from model import CurveFitter, targetFunction
 
+def plot_current_model(webserver, pause: bool):
+    x_plot = np.linspace(0, 1, 1000)
+    y_plot_est = np.zeros((1000, 1))
+    for i in range(len(x_plot)):
+    # Need to center the test elements
+        y = webserver.serv.model.forward(x_plot[i])[0]
+        y_plot_est[i] = y
+
+    fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
+    ax.plot(x_plot, y_plot_est, "b", label="NN output")
+    ax.plot(webserver.serv.model.x_train, 
+            webserver.serv.model.y_train, 
+            "or", label="Training set")
+    ax.grid()
+    ax.legend()
+    if (pause):
+        plt.show()
+    else:
+        plt.draw()
+        plt.pause(0.001)
+
+
 class FedNovaServer:
     """
     FedNovaServer class
@@ -495,6 +517,8 @@ class FedNovaWebServer:
                 self.response_ready.wait()
                 # Now clear this counter
                 self.clients_requesting = 0
+                # train_x, train_y = self.serv.model.createTrainSet(self.serv.n_train)
+                # train_data = {"x_tr":train_x,"y_tr":train_y}
                 return json.dumps(self.serv.train_split_send[cli_id])
 
             elif str(uri[0]) == "dataset" and "id" in params:
@@ -522,6 +546,7 @@ class FedNovaWebServer:
                 self.ready_to_continue.wait()
                 # Now clear this counter
                 self.clients_done_training = 0
+                
                 # We can be certain that the new model has been 
                 # updated by all client models 
                 return json.dumps(self.serv.model_params)
@@ -611,6 +636,9 @@ class FedNovaWebServer:
                     cherrypy.response.status = 200
                     # a single client has contributed to the model
                     self.clients_done_training += 1
+                    if (self.clients_done_training == self.serv.n_clients):
+                        res2 = self.serv.updateWeights()
+                        
                     return json.dumps(out)
                 else:
                     # Fail
@@ -649,21 +677,7 @@ def main():
             time.sleep(10)
     except KeyboardInterrupt:
         cherrypy.engine.stop()
-        x_plot = np.linspace(0, 1, 1000)
-        y_plot_est = np.zeros((1000, 1))
-        for i in range(len(x_plot)):
-        # Need to center the test elements
-            y = webserver.serv.model.forward(x_plot[i])[0]
-            y_plot_est[i] = y
-
-        fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
-        ax.plot(x_plot, y_plot_est, "b", label="NN output")
-        ax.plot(webserver.serv.model.x_train, 
-                webserver.serv.model.y_train, 
-                "or", label="Training set")
-        ax.grid()
-        ax.legend()
-        plt.show()
+        plot_current_model(webserver, pause=True)
 
 
 if __name__ == "__main__":
