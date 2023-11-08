@@ -7,9 +7,11 @@ import sys
 import time
 import warnings
 
+import threading
+import matplotlib.pyplot as plt
+
 from .config import *
 from model import CurveFitter, targetFunction
-
 
 class FedNovaServer:
     """
@@ -450,6 +452,9 @@ class FedNovaWebServer:
         self.msg_ok = {"status": "SUCCESS", "msg": "", "params": {}}
         self.msg_ko = {"status": "FAILURE", "msg": "", "params": {}}
 
+        self.clients_ready = 0
+        self.response_ready = threading.Event()
+
     def GET(self, *uri, **params):
         """
         GET
@@ -476,7 +481,19 @@ class FedNovaWebServer:
                     )
                 # Get the data set associated with the client
                 cli_id = client_info["id"]
+
+                # Dont send data until all clients have requested
+                self.clients_ready += 1
+                if self.clients_ready < self.serv.n_clients:
+                    self.response_ready.clear()
+                else:
+                    self.response_ready.set()
+                # Wait here
+                self.response_ready.wait()
+                # Now clear this counter
+                self.clients_ready = 0
                 return json.dumps(self.serv.train_split_send[cli_id])
+
             elif str(uri[0]) == "dataset" and "id" in params:
                 # Ensure the user is registered
                 cli_id = int(params["id"])
@@ -489,6 +506,7 @@ class FedNovaWebServer:
                     )
                 # Get the data set associated with the client
                 return json.dumps(self.serv.train_split_send[cli_id])
+
             elif str(uri[0]) == "weights":
                 # Need to format (JSON) the weights array:
                 return json.dumps(self.serv.model_params)
@@ -614,6 +632,21 @@ def main():
             time.sleep(10)
     except KeyboardInterrupt:
         cherrypy.engine.stop()
+        x_plot = np.linspace(0, 1, 1000)
+        y_plot_est = np.zeros((1000, 1))
+        for i in range(len(x_plot)):
+        # Need to center the test elements
+            y = webserver.serv.model.forward(x_plot[i])[0]
+            y_plot_est[i] = y
+
+        fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
+        ax.plot(x_plot, y_plot_est, "b", label="NN output")
+        ax.plot(webserver.serv.model.x_train, 
+                webserver.serv.model.y_train, 
+                "or", label="Training set")
+        ax.grid()
+        ax.legend()
+        plt.show()
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 {
-    "ip": "127.0.0.1",
+    "ip": "localhost",
     "port": 9099,
     "clients": [],
     "parameters": {
