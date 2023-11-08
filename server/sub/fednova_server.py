@@ -516,6 +516,7 @@ class FedNovaWebServer:
                 # Wait here
                 self.response_ready.wait()
                 # Now clear this counter
+                time.sleep(1) # do this so that clients dont get stuck
                 self.clients_requesting = 0
                 # train_x, train_y = self.serv.model.createTrainSet(self.serv.n_train)
                 # train_data = {"x_tr":train_x,"y_tr":train_y}
@@ -545,6 +546,7 @@ class FedNovaWebServer:
                 # Wait here
                 self.ready_to_continue.wait()
                 # Now clear this counter
+                time.sleep(1)
                 self.clients_done_training = 0
                 
                 # We can be certain that the new model has been 
