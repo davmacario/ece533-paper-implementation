@@ -10,7 +10,7 @@ class ClientNode:
     PID = str(getpid())
     server_port = ""
     addr = "http://localhost:"
-    client_model = CurveFitter(24, targetFunction)
+    client_model = CurveFitter(30, targetFunction)
     num_rounds = 0
     n_epochs = 200
     current_tx = np.array([])
@@ -42,15 +42,28 @@ class ClientNode:
         r = requests.get(self.addr + f"dataset?pid={self.PID}")
         if r.status_code != 201 and r.status_code != 200:
             raise Exception(f"{self.PID}: bad response from server on request data - round {self.num_rounds}")
-        try:
-            data = r.json()
-            t_x = np.array(data["x_tr"])
-            t_y = np.array(data["y_tr"])
-            self.current_tx = t_x
-            self.current_ty = t_y
-        except Exception as e:
-            raise e
+        data = r.json()
+        t_x = np.array(data["x_tr"])
+        t_y = np.array(data["y_tr"])
+        self.current_tx = t_x
+        self.current_ty = t_y
         return t_x, t_y
+
+    def request_updated_weights_from_server(self):
+        """ after sending gradient matrix to server 
+            we then request the updated global weights before
+            starting the process over again so all clients are 
+            synced """
+        print(f"{self.PID}: requesting global weights - round {self.num_rounds}")
+        # blocks until we get the data from server
+        r = requests.get(self.addr + f"weights")
+        if r.status_code != 201 and r.status_code != 200:
+            raise Exception(f"{self.PID}: bad response from server on request weights - round {self.num_rounds}")
+
+        # new global params should replace local
+        model_params = r.json()
+        self.client_model.w = np.array(model_params["weights"])
+
     def train_with_new_data(self, t_x, t_y):
         """ class method to do the training of current 
             local model and store the local gradients """
@@ -70,7 +83,6 @@ class ClientNode:
         if r.status_code != 200:
             raise Exception(f"{self.PID} bad response from server on send data - round {self.num_rounds}")
         self.num_rounds += 1
-        return True
 
 def main():
     server_port = '9099'
@@ -80,11 +92,9 @@ def main():
     while(1):
         t_x, t_y = my_node.request_data_from_server()
         json_obj = my_node.train_with_new_data(t_x, t_y)
-        success = my_node.send_data_to_server(json_obj)
-        if success is True:
-            continue
-        else:
-            break
+        my_node.send_data_to_server(json_obj)
+        my_node.request_updated_weights_from_server()
+
     return
 
 if __name__=="__main__":

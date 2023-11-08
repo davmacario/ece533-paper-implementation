@@ -452,8 +452,11 @@ class FedNovaWebServer:
         self.msg_ok = {"status": "SUCCESS", "msg": "", "params": {}}
         self.msg_ko = {"status": "FAILURE", "msg": "", "params": {}}
 
-        self.clients_ready = 0
+        # For synchronizing clients
+        self.clients_requesting = 0
         self.response_ready = threading.Event()
+        self.clients_done_training = 0
+        self.ready_to_continue = threading.Event()
 
     def GET(self, *uri, **params):
         """
@@ -483,15 +486,15 @@ class FedNovaWebServer:
                 cli_id = client_info["id"]
 
                 # Dont send data until all clients have requested
-                self.clients_ready += 1
-                if self.clients_ready < self.serv.n_clients:
+                self.clients_requesting += 1
+                if self.clients_requesting < self.serv.n_clients:
                     self.response_ready.clear()
                 else:
                     self.response_ready.set()
                 # Wait here
                 self.response_ready.wait()
                 # Now clear this counter
-                self.clients_ready = 0
+                self.clients_requesting = 0
                 return json.dumps(self.serv.train_split_send[cli_id])
 
             elif str(uri[0]) == "dataset" and "id" in params:
@@ -508,7 +511,19 @@ class FedNovaWebServer:
                 return json.dumps(self.serv.train_split_send[cli_id])
 
             elif str(uri[0]) == "weights":
-                # Need to format (JSON) the weights array:
+                # This is where clients are requesting the updated model params 
+                # We want this also to block until all clients have finished training
+                # and also have sent in their data 
+                if self.clients_done_training < self.serv.n_clients:
+                    self.ready_to_continue.clear()
+                else:
+                    self.ready_to_continue.set()
+                # Wait here
+                self.ready_to_continue.wait()
+                # Now clear this counter
+                self.clients_done_training = 0
+                # We can be certain that the new model has been 
+                # updated by all client models 
                 return json.dumps(self.serv.model_params)
             else:
                 raise cherrypy.HTTPError(
@@ -594,6 +609,8 @@ class FedNovaWebServer:
                         "msg"
                     ] = f"Updated gradients matrix for client with pid = {pid_cli}!"
                     cherrypy.response.status = 200
+                    # a single client has contributed to the model
+                    self.clients_done_training += 1
                     return json.dumps(out)
                 else:
                     # Fail
