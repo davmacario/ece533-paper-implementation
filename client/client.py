@@ -34,10 +34,10 @@ class ClientNode:
             with open(cli_info_path) as f:
                 self.cli_info = json.load(f)
             self.cli_info["pid"] = int(self.PID)
-            self.n_epochs = self.cli_info["n_epochs"]
-            self.batch_size = self.cli_info["batch_size"]
-            self.cli_class = self.cli_info["cli_class"]
-            self.learning_rate = self.cli_info["learning_rate"]
+            self.n_epochs = self.cli_info["capabilities"]["n_epochs"]
+            self.batch_size = self.cli_info["capabilities"]["batch_size"]
+            self.cli_class = self.cli_info["capabilities"]["cli_class"]
+            self.learning_rate = self.cli_info["capabilities"]["learning_rate"]
         else:
             self.cli_info = {
                 "pid": int(self.PID),
@@ -126,14 +126,34 @@ class ClientNode:
 
 def main():
     server_port = "9099"
-    my_node = ClientNode(server_port)
-    my_node.register_with_server()
+    if len(sys.argv) > 1:
+        # Argv[1] contains path
+        my_node = ClientNode(server_port, str(sys.argv[1]))
+    else:
+        my_node = ClientNode(server_port)
+
+    registered = False
+    att = 1
+    while not registered:
+        try:
+            my_node.register_with_server()
+            registered = True
+        except:
+            print(f"Registration attempt {att} failed")
+            att += 1
+            time.sleep(1)
+
+        if att >= 50:
+            return 0
 
     t_x, t_y = my_node.request_data_from_server()
     while 1:
-        json_obj = my_node.train_with_new_data(t_x, t_y)
-        my_node.send_data_to_server(json_obj)
-        my_node.request_updated_weights_from_server()
+        try:
+            json_obj = my_node.train_with_new_data(t_x, t_y)
+            my_node.send_data_to_server(json_obj)
+            my_node.request_updated_weights_from_server()
+        except KeyboardInterrupt:
+            return 1
 
     return
 
