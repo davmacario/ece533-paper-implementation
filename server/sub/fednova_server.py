@@ -122,7 +122,7 @@ class FedNovaServer:
         self._cli_capabilities_params = ["n_epochs", "batch_size", "cli_class"]
 
         # Model
-        self._valid_update_rules = ["FedNova", "Standard"]
+        self._valid_update_rules = ["FedNova", "FedAvg"]
         if not update_type in self._valid_update_rules:
             raise ValueError(
                 f"Specified update rule {update_type} is not valid!\nValid rules are: {self._valid_update_rules}"
@@ -344,6 +344,8 @@ class FedNovaServer:
 
     def initTauEff(self):
         """Evaluate tau_eff for FedNova update rule, based on the clients parameters"""
+        ## TODO init tau eff based on fedavg vs fednova rules ## 
+        
         self.tau_eff
 
     def addGradientMatrix(
@@ -396,7 +398,7 @@ class FedNovaServer:
         """
         assert self.update_rule in self._valid_update_rules  # Shouldn't need it
 
-        if self.update_rule.lower() == "standard":
+        if self.update_rule.lower() == "fedavg":
             # this will be used to show bad convergence using a vanilla SGD model
             sum_upd = 0
             for i in range(self.n_clients):
@@ -705,7 +707,7 @@ class FedNovaWebServer:
 
 
 def main():
-    webserver = FedNovaWebServer(N_CLIENTS, update_type="Standard")
+    webserver = FedNovaWebServer(N_CLIENTS, update_type="FedAvg")
 
     cherrypy.tree.mount(webserver, "/", webserver.ws_config)
     cherrypy.config.update(
