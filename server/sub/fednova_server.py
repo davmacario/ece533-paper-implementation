@@ -13,7 +13,12 @@ import matplotlib.pyplot as plt
 from .config import *
 from model import CurveFitter, targetFunction
 
+fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
+plt.pause(0.001)
+
+first = 1
 def plot_current_model(webserver, pause: bool):
+    global first
     x_plot = np.linspace(0, 1, 1000)
     y_plot_est = np.zeros((1000, 1))
     for i in range(len(x_plot)):
@@ -21,17 +26,18 @@ def plot_current_model(webserver, pause: bool):
         y = webserver.serv.model.forward(x_plot[i])[0]
         y_plot_est[i] = y
 
-    fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
-    ax.plot(x_plot, y_plot_est, "b", label="NN output")
-    ax.plot(webserver.serv.model.x_train, 
-            webserver.serv.model.y_train, 
-            "or", label="Training set")
-    ax.grid()
-    ax.legend()
+    #fig.clear()
+    
+    ax.plot(x_plot, y_plot_est, color=(0,0,1), label="NN output")
+    if (first):
+        ax.grid()
+        ax.plot(webserver.serv.model.x_train, 
+                webserver.serv.model.y_train, 
+                "or", label="Training set")
+        first = 0
     if (pause):
         plt.show()
     else:
-        plt.draw()
         plt.pause(0.001)
 
 
@@ -111,7 +117,7 @@ class FedNovaServer:
         self._cli_capabilities_params = ["n_epochs", "batch_size", "cli_class"]
 
         # Model
-        self._valid_update_rules = ["FedNova"]
+        self._valid_update_rules = ["FedNova", "Standard"]
         if not update_type in self._valid_update_rules:
             raise ValueError(
                 f"Specified update rule {update_type} is not valid!\nValid rules are: {self._valid_update_rules}"
@@ -122,7 +128,7 @@ class FedNovaServer:
         self.n_tr_cli = [0] * self.n_clients
         self.p_i = [0] * self.n_clients
         self.tau_i = [0] * self.n_clients
-        self.tau_eff = 0
+        self.tau_eff = 0.1
         self.eta_global = ETA  # Learning rate for global update
         self.model = CurveFitter(self.n_neurons_hidden, targetFunction)
         self.eta = ETA  # Learning rate for local update (NOT USED...)
@@ -385,27 +391,40 @@ class FedNovaServer:
         """
         assert self.update_rule in self._valid_update_rules  # Shouldn't need it
 
-        if self.update_rule.lower() == "fednova":
-            if not all(self.cli_last_grad != 0):
-                # Some local updates are missing! Wait for them
-                return 0
-            else:
-                # To perform global update need:
-                # - tau_eff
-                # - p_i
-                # Can perform global update
-                sum_upd = 0
-                for i in range(self.n_clients):
-                    sum_upd += (
-                        self.ds_fraction[i] * self.eta_global * self.cli_last_grad[i]
-                    )
-                self.model.w = self.params - self.tau_eff * sum_upd
-                self.model_params["weights"] = self.model.w.tolist()
-                self.model_params["last_update"] = time.time()
-                # Reset the normalized local gradients for next global iteration
-                self.cli_last_grad = [0] * self.n_clients
+        if self.update_rule.lower() == "standard":
+            # this will be used to show bad convergence using a vanilla SGD model
+            sum_upd = 0
+            for i in range(self.n_clients):
+                sum_upd += (
+                    (1 / self.n_clients) * 0.001 * self.cli_last_grad[i]
+                )
+            self.model.w = self.model.w - 10.0 * sum_upd
+            self.model_params["weights"] = self.model.w.tolist()
+            self.model_params["last_update"] = time.time()
+            # Reset the normalized local gradients for next global iteration
+            self.cli_last_grad = [0] * self.n_clients
 
-                return 1
+            self.n_update_iterations += 1
+            return 1
+
+        if self.update_rule.lower() == "fednova":
+            # To perform global update need:
+            # - tau_eff
+            # - p_i
+            # Can perform global update
+            sum_upd = 0
+            for i in range(self.n_clients):
+                sum_upd += (
+                    (1 / self.n_clients) * self.eta_global * self.cli_last_grad[i]
+                )
+            self.model.w = self.model.w - 10.0 * sum_upd
+            self.model_params["weights"] = self.model.w.tolist()
+            self.model_params["last_update"] = time.time()
+            # Reset the normalized local gradients for next global iteration
+            self.cli_last_grad = [0] * self.n_clients
+
+            self.n_update_iterations += 1
+            return 1
         else:
             raise ValueError(f"Unsupported update rule {self.update_rule}!")
 
@@ -438,6 +457,7 @@ class FedNovaWebServer:
             os.path.dirname(__file__), "fednova_API.json"
         ),
         public: bool = False,
+        update_type = "FedNova"
     ):
         """
         FedNovaWebServer
@@ -452,7 +472,8 @@ class FedNovaWebServer:
         - public: flag to choose whether to make server publicly accessible (from
         any network interface of the host)
         """
-        self.serv = FedNovaServer(n_clients, in_json_path, out_json_path)
+        self.serv = FedNovaServer(n_clients, in_json_path, 
+                                out_json_path, update_type=update_type)
         with open(cmd_list_path) as f:
             self.API = json.load(f)
 
@@ -518,8 +539,9 @@ class FedNovaWebServer:
                 # Now clear this counter
                 time.sleep(1) # do this so that clients dont get stuck
                 self.clients_requesting = 0
-                # train_x, train_y = self.serv.model.createTrainSet(self.serv.n_train)
-                # train_data = {"x_tr":train_x,"y_tr":train_y}
+                #train_x, train_y = self.serv.model.createTrainSet(self.serv.n_train)
+                #train_data = {"x_tr":train_x.tolist(),"y_tr":train_y.tolist()}
+                #return json.dumps(train_data)
                 return json.dumps(self.serv.train_split_send[cli_id])
 
             elif str(uri[0]) == "dataset" and "id" in params:
@@ -666,7 +688,7 @@ class FedNovaWebServer:
 
 
 def main():
-    webserver = FedNovaWebServer(N_CLIENTS)
+    webserver = FedNovaWebServer(N_CLIENTS, update_type="Standard")
 
     cherrypy.tree.mount(webserver, "/", webserver.ws_config)
     cherrypy.config.update(
@@ -677,6 +699,7 @@ def main():
     try:
         while True:
             time.sleep(10)
+            plot_current_model(webserver, pause=False)
     except KeyboardInterrupt:
         cherrypy.engine.stop()
         plot_current_model(webserver, pause=True)

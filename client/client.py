@@ -12,7 +12,8 @@ class ClientNode:
     addr = "http://localhost:"
     client_model = CurveFitter(30, targetFunction)
     num_rounds = 0
-    n_epochs = 200
+    n_epochs = 100
+    learning_rate = 0.0000028
     current_tx = np.array([])
     current_ty = np.array([])
     current_grad_matrix = np.array([])
@@ -70,7 +71,9 @@ class ClientNode:
         current_weights = self.client_model.w
         self.client_model.assignTrainSet(t_x, t_y)
         start_time = time.time()
-        self.current_grad_matrix = self.client_model.train(self.n_epochs, 5e-3, 1)
+        #if (self.num_rounds%10 == 0 and self.num_rounds != 0):
+        #    self.learning_rate /= 2
+        self.current_grad_matrix = self.client_model.train(self.n_epochs, self.learning_rate, 1)
         end_time = time.time()
         train_time = end_time - start_time
         json_dict = {"gradients":self.current_grad_matrix.tolist(),"time":train_time}
