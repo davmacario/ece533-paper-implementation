@@ -50,9 +50,9 @@ class ClientNode:
             }
 
     def register_with_server(self):
+        """send post request to register as a client
+        with the current open server"""
         time.sleep(1)
-        """ send post request to register as a client
-            with the current open server """
         print(f"{self.PID}: registering with server")
         json_to_send = json.dumps(self.cli_info)
         r = requests.post(self.addr + "register", data=json_to_send)
@@ -62,9 +62,9 @@ class ClientNode:
             )
 
     def request_data_from_server(self):
+        """send a get request to receive allocated data
+        to do local training on from the server"""
         time.sleep(1)
-        """ send a get request to receive allocated data 
-            to do local training on from the server """
         print(f"{self.PID}: requesting data - round {self.num_rounds}")
         # blocks until we get data from server
         r = requests.get(self.addr + f"dataset?pid={self.PID}")

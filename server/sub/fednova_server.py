@@ -344,8 +344,8 @@ class FedNovaServer:
 
     def initTauEff(self):
         """Evaluate tau_eff for FedNova update rule, based on the clients parameters"""
-        ## TODO init tau eff based on fedavg vs fednova rules ## 
-        
+        ## TODO init tau eff based on fedavg vs fednova rules ##
+
         self.tau_eff
 
     def addGradientMatrix(
