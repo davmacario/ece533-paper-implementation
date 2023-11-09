@@ -17,25 +17,30 @@ fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
 plt.pause(0.001)
 
 first = 1
+
+
 def plot_current_model(webserver, pause: bool):
     global first
     x_plot = np.linspace(0, 1, 1000)
     y_plot_est = np.zeros((1000, 1))
     for i in range(len(x_plot)):
-    # Need to center the test elements
+        # Need to center the test elements
         y = webserver.serv.model.forward(x_plot[i])[0]
         y_plot_est[i] = y
 
-    #fig.clear()
-    
-    ax.plot(x_plot, y_plot_est, color=(0,0,1), label="NN output")
-    if (first):
+    # fig.clear()
+
+    ax.plot(x_plot, y_plot_est, color=(0, 0, 1), label="NN output")
+    if first:
         ax.grid()
-        ax.plot(webserver.serv.model.x_train, 
-                webserver.serv.model.y_train, 
-                "or", label="Training set")
+        ax.plot(
+            webserver.serv.model.x_train,
+            webserver.serv.model.y_train,
+            "or",
+            label="Training set",
+        )
         first = 0
-    if (pause):
+    if pause:
         plt.show()
     else:
         plt.pause(0.001)
@@ -395,9 +400,7 @@ class FedNovaServer:
             # this will be used to show bad convergence using a vanilla SGD model
             sum_upd = 0
             for i in range(self.n_clients):
-                sum_upd += (
-                    (1 / self.n_clients) * 0.001 * self.cli_last_grad[i]
-                )
+                sum_upd += (1 / self.n_clients) * 0.001 * self.cli_last_grad[i]
             self.model.w = self.model.w - 10.0 * sum_upd
             self.model_params["weights"] = self.model.w.tolist()
             self.model_params["last_update"] = time.time()
@@ -457,7 +460,7 @@ class FedNovaWebServer:
             os.path.dirname(__file__), "fednova_API.json"
         ),
         public: bool = False,
-        update_type = "FedNova"
+        update_type="FedNova",
     ):
         """
         FedNovaWebServer
@@ -472,8 +475,9 @@ class FedNovaWebServer:
         - public: flag to choose whether to make server publicly accessible (from
         any network interface of the host)
         """
-        self.serv = FedNovaServer(n_clients, in_json_path, 
-                                out_json_path, update_type=update_type)
+        self.serv = FedNovaServer(
+            n_clients, in_json_path, out_json_path, update_type=update_type
+        )
         with open(cmd_list_path) as f:
             self.API = json.load(f)
 
@@ -496,9 +500,9 @@ class FedNovaWebServer:
         self.msg_ko = {"status": "FAILURE", "msg": "", "params": {}}
 
         # For synchronizing clients
-        self.clients_requesting = 0
+        self.clients_requesting = []
         self.response_ready = threading.Event()
-        self.clients_done_training = 0
+        self.clients_done_training = []
         self.ready_to_continue = threading.Event()
 
     def GET(self, *uri, **params):
@@ -529,19 +533,17 @@ class FedNovaWebServer:
                 cli_id = client_info["id"]
 
                 # Dont send data until all clients have requested
-                self.clients_requesting += 1
-                if self.clients_requesting < self.serv.n_clients:
+                if cli_id not in self.clients_requesting:
+                    self.clients_requesting.append(cli_id)
+                if len(self.clients_requesting) < self.serv.n_clients:
                     self.response_ready.clear()
                 else:
                     self.response_ready.set()
                 # Wait here
                 self.response_ready.wait()
                 # Now clear this counter
-                time.sleep(1) # do this so that clients dont get stuck
-                self.clients_requesting = 0
-                #train_x, train_y = self.serv.model.createTrainSet(self.serv.n_train)
-                #train_data = {"x_tr":train_x.tolist(),"y_tr":train_y.tolist()}
-                #return json.dumps(train_data)
+                time.sleep(1)  # do this so that clients dont get stuck
+                self.clients_requesting = []
                 return json.dumps(self.serv.train_split_send[cli_id])
 
             elif str(uri[0]) == "dataset" and "id" in params:
@@ -558,10 +560,10 @@ class FedNovaWebServer:
                 return json.dumps(self.serv.train_split_send[cli_id])
 
             elif str(uri[0]) == "weights":
-                # This is where clients are requesting the updated model params 
+                # This is where clients are requesting the updated model params
                 # We want this also to block until all clients have finished training
-                # and also have sent in their data 
-                if self.clients_done_training < self.serv.n_clients:
+                # and also have sent in their data
+                if len(self.clients_done_training) < self.serv.n_clients:
                     self.ready_to_continue.clear()
                 else:
                     self.ready_to_continue.set()
@@ -569,10 +571,10 @@ class FedNovaWebServer:
                 self.ready_to_continue.wait()
                 # Now clear this counter
                 time.sleep(1)
-                self.clients_done_training = 0
-                
-                # We can be certain that the new model has been 
-                # updated by all client models 
+                self.clients_done_training = []
+
+                # We can be certain that the new model has been
+                # updated by all client models
                 return json.dumps(self.serv.model_params)
             else:
                 raise cherrypy.HTTPError(
@@ -650,6 +652,12 @@ class FedNovaWebServer:
         if len(uri) >= 1:
             if str(uri[0]) == "updated_params" and "pid" in params:
                 pid_cli = int(params["pid"])
+                client_info = self.serv.searchClient("pid", pid_cli)
+                if client_info == {}:
+                    raise cherrypy.HTTPError(
+                        404, f"Client with pid {pid_cli} not found!"
+                    )
+                id_cli = client_info["id"]
                 res = self.serv.addGradientMatrix(gradients_mat, pid_cli)
                 if res == 1:
                     # Success
@@ -659,10 +667,11 @@ class FedNovaWebServer:
                     ] = f"Updated gradients matrix for client with pid = {pid_cli}!"
                     cherrypy.response.status = 200
                     # a single client has contributed to the model
-                    self.clients_done_training += 1
-                    if (self.clients_done_training == self.serv.n_clients):
+                    if id_cli not in self.clients_done_training:
+                        self.clients_done_training.append(id_cli)
+                    if len(self.clients_done_training) == self.serv.n_clients:
                         res2 = self.serv.updateWeights()
-                        
+
                     return json.dumps(out)
                 else:
                     # Fail
@@ -671,6 +680,9 @@ class FedNovaWebServer:
                     cherrypy.response.status = 400
             elif str(uri[0]) == "updated_params" and "id" in params:
                 id_cli = int(params(["id"]))
+                client_info = self.serv.searchClient("id", id_cli)
+                if client_info == {}:
+                    raise cherrypy.HTTPError(404, f"Client with id {id_cli} not found!")
                 res = self.serv.addGradientMatrix(gradients_mat, id_cli, "id")
                 if res == 1:
                     # Success
@@ -679,6 +691,11 @@ class FedNovaWebServer:
                         "msg"
                     ] = f"Updated gradients matrix for client with pid = {id_cli}!"
                     cherrypy.response.status = 200
+                    # a single client has contributed to the model
+                    if id_cli not in self.clients_done_training:
+                        self.clients_done_training.append(id_cli)
+                    if len(self.clients_done_training) == self.serv.n_clients:
+                        res2 = self.serv.updateWeights()
                     return json.dumps(out)
                 else:
                     # Fail
