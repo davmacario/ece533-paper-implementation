@@ -222,7 +222,7 @@ class CurveFitter:
         tau = np.ceil(n_epochs * self.n_train / batch_size)
 
         # matrix to store (in each column) the average gradient over each batch
-        batch_gradients = np.zeros((self.n_params, n_iter_epoch))
+        batch_gradients = np.zeros((self.n_params, n_epochs * n_iter_epoch))
 
         for i in range(self.n_train):
             y_curr[i], v = self.forward(self.x_train[i])
@@ -261,7 +261,7 @@ class CurveFitter:
                         )
 
                 avg_grad_batch = grad_sum / actual_batch_size
-                batch_gradients[:, i] = grad_sum.squeeze()
+                batch_gradients[:, epoch * n_iter_epoch + i] = grad_sum.squeeze()
                 self.w = self.w - self.eta * avg_grad_batch
 
             mse_curr = mse(self.y_train, y_curr)

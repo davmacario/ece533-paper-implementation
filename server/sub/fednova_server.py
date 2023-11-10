@@ -431,7 +431,7 @@ class FedNovaServer:
             )
             local_learn_rate = cli["capabilities"]["learning_rate"]
             # self.cli_last_update[cli_id] = self.cli_last_grad[cli_id] * local_learn_rate
-            self.cli_last_update[cli_id] = self.cli_last_grad[cli_id] * 0.00001
+            self.cli_last_update[cli_id] = self.cli_last_grad[cli_id] * 0.000001
 
         return 1
 
