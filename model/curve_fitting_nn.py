@@ -268,7 +268,7 @@ class CurveFitter:
 
         if VERB:
             print(" " * (len(prt_str) + 1), end="\r")
-        return batch_gradients
+        return batch_gradients, self.mse_per_epoch
 
     def grad(self, x: float, d: float, y: float, v: np.ndarray) -> np.ndarray:
         """
@@ -434,7 +434,7 @@ def main(n: int, N: int, img_folder: str, plots: bool = False):
     # Launch BP algorithm
     eta = 5e-3
     n_epochs = 600
-    grad_matrix_train = myNN.train(n_epochs, eta, 1)
+    grad_matrix_train = myNN.train(n_epochs, eta, 12)
 
     print("BP terminated!")
 

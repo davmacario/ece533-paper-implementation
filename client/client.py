@@ -7,6 +7,7 @@ import time
 import sys
 
 from model import CurveFitter, targetFunction
+from .config import *
 
 
 class ClientNode:
@@ -74,9 +75,13 @@ class ClientNode:
             )
         data = r.json()
         t_x = np.array(data["x_tr"])
+        t_x = t_x.reshape((len(t_x), 1))
         t_y = np.array(data["y_tr"])
+        t_y = t_y.reshape((len(t_y), 1))
         self.current_tx = t_x
         self.current_ty = t_y
+        if DEBUG:
+            print("N. train elements: ", len(t_x))
         return t_x, t_y
 
     def request_updated_weights_from_server(self):
@@ -92,7 +97,7 @@ class ClientNode:
                 f"{self.PID}: bad response from server on request weights - round {self.num_rounds}"
             )
 
-        # new global params should replace local
+        # new global params should replace local only if timestamp is new!
         model_params = r.json()
         self.client_model.assignParameters(np.array(model_params["weights"]))
 
@@ -104,9 +109,14 @@ class ClientNode:
         start_time = time.time()
         # if (self.num_rounds%10 == 0 and self.num_rounds != 0):
         #    self.learning_rate /= 2
-        self.current_grad_matrix = self.client_model.train(
-            self.n_epochs, self.learning_rate, 1
+        self.current_grad_matrix, mse_lst = self.client_model.train(
+            self.n_epochs,
+            self.learning_rate,
+            self.batch_size,
         )
+        if DEBUG:
+            print(f"MSE before: {mse_lst[0]}; MSE after: {mse_lst[-1]}")
+            print("Shape of gradient matrix: ", self.current_grad_matrix.shape)
         end_time = time.time()
         train_time = end_time - start_time
         json_dict = {"gradients": self.current_grad_matrix.tolist(), "time": train_time}
@@ -127,9 +137,10 @@ class ClientNode:
 def main():
     server_port = "9099"
     if len(sys.argv) > 1:
-        # Argv[1] contains path
+        # Argv[1] contains path with client settings
         my_node = ClientNode(server_port, str(sys.argv[1]))
     else:
+        # If no path is passed, default client is instantiated
         my_node = ClientNode(server_port)
 
     registered = False
@@ -146,6 +157,7 @@ def main():
         if att >= 50:
             return 0
 
+    my_node.request_updated_weights_from_server()
     t_x, t_y = my_node.request_data_from_server()
     while 1:
         try:
