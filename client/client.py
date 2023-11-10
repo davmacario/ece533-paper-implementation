@@ -13,9 +13,10 @@ from .config import *
 class ClientNode:
     PID = str(getpid())
     server_port = ""
-    addr = "http://localhost:"
-    client_model = CurveFitter(30, targetFunction)
+    addr = "http://127.0.0.1:"
+    client_model = CurveFitter(N_NEURONS_HIDDEN)
     num_rounds = 0
+    # The following value can be overwritten by the configuration JSON
     n_epochs = 100
     batch_size = 12
     cli_class = 5
@@ -23,6 +24,7 @@ class ClientNode:
     current_tx = np.array([])
     current_ty = np.array([])
     current_grad_matrix = np.array([])
+    last_params_update = 0
 
     def __init__(self, server_port, cli_info_path: str = None):
         """tell the new client node what port
@@ -97,9 +99,11 @@ class ClientNode:
                 f"{self.PID}: bad response from server on request weights - round {self.num_rounds}"
             )
 
-        # new global params should replace local only if timestamp is new!
+        # New global params should replace local only if timestamp is new!
         model_params = r.json()
-        self.client_model.assignParameters(np.array(model_params["weights"]))
+        if model_params["last_update"] > self.last_params_update:
+            self.client_model.assignParameters(np.array(model_params["weights"]))
+            self.last_params_update = model_params["last_update"]
 
     def train_with_new_data(self, t_x, t_y):
         """class method to do the training of current
