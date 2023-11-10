@@ -19,7 +19,7 @@ plt.pause(0.001)
 first = 1
 
 
-def plot_current_model(webserver, pause: bool):
+def plot_current_model(webserver, pause: bool, new_fig: bool = False):
     global first
     x_plot = np.linspace(0, 1, 1000)
     y_plot_est = np.zeros((1000, 1))
@@ -27,8 +27,6 @@ def plot_current_model(webserver, pause: bool):
         # Need to center the test elements
         y = webserver.serv.model.forward(x_plot[i])[0]
         y_plot_est[i] = y
-
-    # fig.clear()
 
     ax.plot(x_plot, y_plot_est, color=(0, 0, 1), label="NN output")
     if first:
@@ -123,7 +121,12 @@ class FedNovaServer:
         self._cli_params_input = ["pid", "capabilities"]  # TODO: decide the syntax
         # Keys of the client dictionary after registration (add "id")
         self._cli_params = ["id", "pid", "capabilities"]
-        self._cli_capabilities_params = ["n_epochs", "batch_size", "cli_class"]
+        self._cli_capabilities_params = [
+            "n_epochs",
+            "batch_size",
+            "cli_class",
+            "learning_rate",
+        ]
 
         # Model
         self._valid_update_rules = ["FedNova", "FedAvg"]
@@ -132,16 +135,16 @@ class FedNovaServer:
                 f"Specified update rule {update_type} is not valid!\nValid rules are: {self._valid_update_rules}"
             )
         self.update_rule = update_type
-        self.n_neurons_hidden = N_NEURONS_HIDDEN
-        self.n_train = N_TRAIN
+        self.n_neurons_hidden = self._server_info["parameters"]["n_neurons_hidden"]
+        self.n_train = self._server_info["parameters"]["n_train"]
         self.n_tr_cli = [0] * self.n_clients
         self.p_i = [0] * self.n_clients
         self.tau_i = [0] * self.n_clients
-        self.tau_eff = 0.1
-        self.eta_global = ETA  # Learning rate for global update
+        self.tau_eff = 0
         self.model = CurveFitter(self.n_neurons_hidden, targetFunction)
-        self.eta = ETA  # Learning rate for local update (NOT USED...)
+        # Learning rate for local update (NOT USED...)
         # Clients use local learning rate!
+        self.eta = self._server_info["parameters"]["learning_rate"]
         self.model.setLearningRate(self.eta)
         # NOTE: maybe need to change range in training set 'x'
         self.train_x, self.train_y = self.model.createTrainSet(self.n_train)
@@ -374,6 +377,7 @@ class FedNovaServer:
 
         if DEBUG:
             print("Tau: ", self.cli_last_tau)
+            print("Tau_eff: ", self.tau_eff)
         return self.tau_eff
 
     def addGradientMatrix(
@@ -414,7 +418,8 @@ class FedNovaServer:
             self.cli_last_grad[cli_id] = np.sum(grad_mat, 1).reshape(
                 (self.n_model_parameters, 1)
             )
-            self.cli_last_update[cli_id] = local_learn_rate * self.cli_last_grad[cli_id]
+            # self.cli_last_update[cli_id] = local_learn_rate * self.cli_last_grad[cli_id]
+            self.cli_last_update[cli_id] = self.eta * self.cli_last_grad[cli_id]
         elif self.update_rule.lower() == "fednova":
             cli = self.searchClient(attr_key, user_val)
             if cli == {}:
@@ -427,11 +432,12 @@ class FedNovaServer:
             norm_a = np.linalg.norm(a, 1)
             norm_batch_grad = np.dot(grad_mat, a) / norm_a
             self.cli_last_grad[cli_id] = norm_batch_grad.reshape(
-                (len(norm_batch_grad), 1)
+                (self.n_model_parameters, 1)
             )
             local_learn_rate = cli["capabilities"]["learning_rate"]
             # self.cli_last_update[cli_id] = self.cli_last_grad[cli_id] * local_learn_rate
-            self.cli_last_update[cli_id] = self.cli_last_grad[cli_id] * 0.000001
+            self.cli_last_update[cli_id] = self.cli_last_grad[cli_id] * self.eta
+            # self.cli_last_update[cli_id] = self.cli_last_grad[cli_id] * 0.000001
 
         return 1
 
@@ -639,9 +645,11 @@ class FedNovaWebServer:
                     self.response_ready.set()
                 # Wait here
                 self.response_ready.wait()
+                # If here, response_ready has been set, meaning that all clients
+                # have been added to the "clients_requesting" list
                 # Now clear this counter
-                self.clients_requesting = []
                 time.sleep(1)  # do this so that clients dont get stuck
+                self.clients_requesting = []
                 return json.dumps(self.serv.train_split_send[cli_id])
 
             elif str(uri[0]) == "dataset" and "id" in params:
@@ -665,11 +673,13 @@ class FedNovaWebServer:
                     self.ready_to_continue.clear()
                 else:
                     self.ready_to_continue.set()
-                # Wait here
+                # Wait here until Event is set()
                 self.ready_to_continue.wait()
-                # Now clear this counter
+                # If here, ready_to_continue has been set, i.e., all clients
+                # have successfully registered (1st call) or updated their model
+                # changes
+                time.sleep(1)  # Leave some time for all cli to sync
                 self.clients_done_training = []
-                time.sleep(1)
 
                 # We can be certain that the new model has been
                 # updated by all client models
@@ -705,7 +715,8 @@ class FedNovaWebServer:
                     out["params"]["pid"] = body["pid"]
                     self.serv.saveStateJson()
                     cherrypy.response.status = 201
-                    # Fix blocking before first iteration:
+                    # Fix blocking before first iteration - registered client is ready for
+                    # receiving weights!
                     self.clients_done_training.append(ret_code_add)
                     return json.dumps(out)
                 elif ret_code_add == -1:
@@ -821,7 +832,7 @@ def main():
             plot_current_model(webserver, pause=False)
     except KeyboardInterrupt:
         cherrypy.engine.stop()
-        plot_current_model(webserver, pause=True)
+        plot_current_model(webserver, pause=True, new_fig=True)
 
 
 if __name__ == "__main__":

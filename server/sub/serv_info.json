@@ -1,8 +1,10 @@
 {
-    "ip": "localhost",
+    "ip": "127.0.0.1",
     "port": 9099,
     "clients": [],
     "parameters": {
-        "eta": 0
+        "n_train": 1000,
+        "n_neurons_hidden": 30,
+        "learning_rate": 0.0001
     }
 }
