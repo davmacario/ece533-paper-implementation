@@ -486,13 +486,11 @@ class FedNovaServer:
             sum_upd = 0
             for i in range(self.n_clients):
                 sum_upd += (1 / self.n_clients) * self.cli_last_update[i]
-            self.model.w = self.model.w - 100 * sum_upd
+            self.model.w = self.model.w - 0.1 * sum_upd
             self.model_params["weights"] = self.model.w.tolist()
             self.model_params["last_update"] = time.time()
             # Reset the normalized local gradients for next global iteration
             self.cli_last_grad = [0] * self.n_clients
-
-            self.n_update_iterations += 1
         elif self.update_rule.lower() == "fednova":
             # To perform global update need:
             # - tau_eff
@@ -501,14 +499,12 @@ class FedNovaServer:
             for i in range(self.n_clients):
                 sum_upd += self.p_i[i] * self.cli_last_update[i]
             # self.model.w = self.model.w - self.tau_eff * sum_upd
-            self.model.w = self.model.w - self.tau_eff * sum_upd
+            self.model.w = self.model.w - self.learningRate() * sum_upd
 
             self.model_params["weights"] = self.model.w.tolist()
             self.model_params["last_update"] = time.time()
             # Reset the normalized local gradients for next global iteration
             self.cli_last_grad = [0] * self.n_clients
-
-            self.n_update_iterations += 1
         else:
             raise ValueError(f"Unsupported update rule {self.update_rule}!")
 
@@ -516,9 +512,18 @@ class FedNovaServer:
         curr_mse = self.getMSE()
         self.mse_per_global_iter.append(curr_mse)
         if DEBUG:
-            print(f"Current MSE: {curr_mse}")
+            print(f"Iteration {self.n_update_iterations}:")
+            print(f"> Current MSE: {curr_mse}")
 
+        self.n_update_iterations += 1
         return 1
+
+    def learningRate(self) -> float:
+        """Fix the learning rate - depending on the global iterations."""
+        if self.n_update_iterations >= 200:
+            return 0.1
+        else:
+            return 1
 
     def getMSE(self):
         """
