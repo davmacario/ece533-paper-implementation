@@ -485,7 +485,7 @@ class FedNovaServer:
             # this will be used to show bad convergence using a vanilla SGD model
             sum_upd = 0
             for i in range(self.n_clients):
-                sum_upd += self.cli_last_update[i]
+                sum_upd += (1 / self.n_clients) * self.cli_last_update[i]
             self.model.w = self.model.w - 100 * sum_upd
             self.model_params["weights"] = self.model.w.tolist()
             self.model_params["last_update"] = time.time()
@@ -500,6 +500,7 @@ class FedNovaServer:
             sum_upd = 0
             for i in range(self.n_clients):
                 sum_upd += self.p_i[i] * self.cli_last_update[i]
+            # self.model.w = self.model.w - self.tau_eff * sum_upd
             self.model.w = self.model.w - self.tau_eff * sum_upd
 
             self.model_params["weights"] = self.model.w.tolist()
