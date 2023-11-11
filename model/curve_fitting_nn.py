@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+import sys
 from typing import Callable
 import warnings
 
@@ -184,7 +185,7 @@ class CurveFitter:
 
     def train(
         self, n_epochs: int, learn_rate: float, batch_size: int = 1, norm: bool = False
-    ):
+    ) -> tuple[np.ndarray, list]:
         """
         train
         ---
@@ -200,6 +201,7 @@ class CurveFitter:
         ### Output parameters
         - grad_matrix: (n_parameters x n_updates) matrix having as columns the gradient
         values at each update; the number of updates is: floor(n_epochs * n_train / batch_size)
+        - mse_per_epoch: MSE values at each training epoch
         """
         # TODO: checks
         self.checkTrainInit()
@@ -405,7 +407,7 @@ def targetFunction(x: float) -> float:
 
     $ y = \sin{(20x)} + 3x$
     """
-    return np.sin(10 * x) + 2 * x
+    return np.sin(4 * x) + 2 * x
 
 
 # +--------------------------------------------------------------------+
@@ -433,8 +435,13 @@ def main(n: int, N: int, img_folder: str, plots: bool = False):
 
     # Launch BP algorithm
     eta = 5e-3
-    n_epochs = 600
-    grad_matrix_train = myNN.train(n_epochs, eta, 12)
+    if len(sys.argv) == 3:
+        n_epochs = int(sys.argv[1])
+        batch_size = int(sys.argv[2])
+    else:
+        n_epochs = 800
+        batch_size = 5
+    myNN.train(n_epochs, eta, batch_size)
 
     print("BP terminated!")
 
