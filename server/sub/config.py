@@ -3,8 +3,8 @@ SERV_PORT = 22222
 
 N_CLIENTS = 3
 N_NEURONS_HIDDEN = 30
-N_TRAIN = 1000
-ETA = 0.001
+N_TRAIN = 4000
+ETA = 0.0000005
 SLOWDOWN = 1  # Ratio between tau_eff and tau avg.
 UPD_TYPE = "FedNova"
 

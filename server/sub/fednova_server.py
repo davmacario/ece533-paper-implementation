@@ -18,7 +18,6 @@ plt.pause(0.001)
 
 first = 1
 
-
 def plot_current_model(webserver, pause: bool, new_fig: bool = False):
     global first
     x_plot = np.linspace(0, 1, 1000)
@@ -162,6 +161,9 @@ class FedNovaServer:
         self.cli_data_sets = []
         self.cli_last_grad = [0] * n_clients
         self.cli_last_update = [0] * n_clients
+        ## this will store the update parameters of the calling client
+        ## p_i is the proportion of data given to client i and tau_i is the number of updates
+        self.cli_last_update_params = [{'p_i':0,'tau_i':0} for n in self.cli_last_update]
         self.cli_last_tau = [0] * n_clients
 
         # Store stats
@@ -258,16 +260,6 @@ class FedNovaServer:
             if self.allCliRegistered():
                 self.splitTrainSet()
         return new_id
-
-    def updateClient(self, cl_info: dict) -> int:
-        """
-        Update the client information after the client has registered.
-
-        ### Input parameters
-        - cl_info: dict containing the information of the client
-
-
-        """
 
     def getFreeID(self) -> int:
         """
@@ -367,19 +359,6 @@ class FedNovaServer:
 
         return 1
 
-    def evalTauEff(self):
-        """Evaluate tau_eff for FedNova update rule, based on the clients parameters"""
-        self.tau_eff = 0
-        for i in range(self.n_clients):
-            self.tau_eff += self.cli_last_tau[i] * self.p_i[i]
-
-        self.tau_eff *= SLOWDOWN
-
-        if DEBUG:
-            print("Tau: ", self.cli_last_tau)
-            print("Tau_eff: ", self.tau_eff)
-        return self.tau_eff
-
     def addGradientMatrix(
         self, grad_mat: np.ndarray, user_val: int, attr_key: str = "pid"
     ) -> int:
@@ -398,46 +377,29 @@ class FedNovaServer:
         ### Return value(s)
         - 1 if successful update
         """
+
+        ## in this function we want to store the relevant information 
+        ## needed for updateweights so that all the clients data is in 
+        ## the correct place 
+
         if attr_key == "pid" and user_val not in self.cli_map_PID:
             raise ValueError(f"PID {user_val} not found among registered clients!")
         elif attr_key == "id" and (user_val < 0 or user_val >= self.n_clients):
             raise ValueError(f"Invalid user ID {user_val}")
-
         if DEBUG:
             print("Shape of gradient matrix: ", grad_mat.shape)
 
-        if self.update_rule.lower() == "fedavg":
-            cli = self.searchClient(attr_key, user_val)
-            if cli == {}:
-                warnings.warn(f"Unable to find client with {attr_key} = {user_val}")
-                return 0
-            cli_id = cli["id"]
-            tau_cli = grad_mat.shape[1]
-            # From paper: the update term in FedAvg is the sum of all gradients
-            local_learn_rate = cli["capabilities"]["learning_rate"]
-            self.cli_last_grad[cli_id] = np.sum(grad_mat, 1).reshape(
-                (self.n_model_parameters, 1)
-            )
-            # self.cli_last_update[cli_id] = local_learn_rate * self.cli_last_grad[cli_id]
-            self.cli_last_update[cli_id] = self.eta * self.cli_last_grad[cli_id]
-        elif self.update_rule.lower() == "fednova":
-            cli = self.searchClient(attr_key, user_val)
-            if cli == {}:
-                warnings.warn(f"Unable to find client with {attr_key} = {user_val}")
-                return 0
-            cli_id = cli["id"]
-            tau_cli = grad_mat.shape[1]
-            self.cli_last_tau[cli_id] = tau_cli
-            a = self.get_a(tau_cli)
-            norm_a = np.linalg.norm(a, 1)
-            norm_batch_grad = np.dot(grad_mat, a) / norm_a
-            self.cli_last_grad[cli_id] = norm_batch_grad.reshape(
-                (self.n_model_parameters, 1)
-            )
-            local_learn_rate = cli["capabilities"]["learning_rate"]
-            # self.cli_last_update[cli_id] = self.cli_last_grad[cli_id] * local_learn_rate
-            self.cli_last_update[cli_id] = self.cli_last_grad[cli_id] * self.eta
-            # self.cli_last_update[cli_id] = self.cli_last_grad[cli_id] * 0.000001
+        cli = self.searchClient(attr_key, user_val)
+        if cli == {}:
+            warnings.warn(f"Unable to find client with {attr_key} = {user_val}")
+            return 0
+        cli_id = cli["id"]
+        print("storing values for [" + str(cli_id) + "]")
+        ## get number of update steps for client i
+        self.cli_last_update_params[cli_id]['tau_i'] = grad_mat.shape[1]
+        ## get proportion of data given to client i
+        self.cli_last_update_params[cli_id]['p_i'] = self.p_i[cli_id]
+        self.cli_last_grad[cli_id] = grad_mat
 
         return 1
 
@@ -458,11 +420,9 @@ class FedNovaServer:
         if tau_i <= 0 or not isinstance(tau_i, int):
             raise ValueError("Unsupported value for tau_i")
 
-        if method.lower() == "vanilla sgd":
-            a = np.ones((tau_i, 1))
-            return a
-        else:
-            raise ValueError(f"Unsupported update method {method}")
+        ## a is always a vector of tau_i ones no matter the update type
+        a = np.ones((tau_i, 1))
+        return a
 
     def updateWeights(self) -> int:
         """
@@ -478,33 +438,44 @@ class FedNovaServer:
         """
         assert self.update_rule in self._valid_update_rules  # Shouldn't need it
 
-        # Update the value of tau_eff (shouldn't need it)
-        self.evalTauEff()
-
         if self.update_rule.lower() == "fedavg":
-            # this will be used to show bad convergence using a vanilla SGD model
-            sum_upd = 0
+            ## this will be used to show bad convergence using fedavg
+            ## calculate tau_eff 
+            print("[1] updating weights fedavg style")
+            tau_eff = 0
             for i in range(self.n_clients):
-                sum_upd += (1 / self.n_clients) * self.cli_last_update[i]
-            self.model.w = self.model.w - 0.1 * sum_upd
+                tau_eff += self.cli_last_update_params[i]['p_i']*self.cli_last_update_params[i]['tau_i']
+            ## calculate weightings
+            final_sum = 0
+            for i in range(self.n_clients):
+                ## for each sum we calculate w_i and d_i and multiply together
+                final_sum += (self.cli_last_update_params[i]['p_i']*self.cli_last_update_params[i]['tau_i'] / tau_eff) * \
+                    np.dot(self.cli_last_grad[i], self.get_a(self.cli_last_update_params[i]['tau_i'])) / \
+                         self.cli_last_update_params[i]['tau_i']
+            final_sum *= self.eta
+            final_sum *= tau_eff
+            self.model.w = self.model.w - final_sum
             self.model_params["weights"] = self.model.w.tolist()
             self.model_params["last_update"] = time.time()
-            # Reset the normalized local gradients for next global iteration
-            self.cli_last_grad = [0] * self.n_clients
-        elif self.update_rule.lower() == "fednova":
-            # To perform global update need:
-            # - tau_eff
-            # - p_i
-            sum_upd = 0
-            for i in range(self.n_clients):
-                sum_upd += self.p_i[i] * self.cli_last_update[i]
-            # self.model.w = self.model.w - self.tau_eff * sum_upd
-            self.model.w = self.model.w - self.learningRate() * sum_upd
 
+        elif self.update_rule.lower() == "fednova":
+            ## the only difference with fednova is that w_i is replaced by p_i
+            print("[1] updating weights fednova style")
+            tau_eff = 0
+            for i in range(self.n_clients):
+                tau_eff += self.cli_last_update_params[i]['p_i']*self.cli_last_update_params[i]['tau_i']
+            ## calculate weightings
+            final_sum = 0
+            for i in range(self.n_clients):
+                ## for each sum we calculate w_i and d_i and multiply together
+                final_sum += self.cli_last_update_params[i]['p_i'] * \
+                    np.dot(self.cli_last_grad[i], self.get_a(self.cli_last_update_params[i]['tau_i'])) / \
+                        self.cli_last_update_params[i]['tau_i']
+            final_sum *= self.eta
+            final_sum *= tau_eff
+            self.model.w = self.model.w - final_sum
             self.model_params["weights"] = self.model.w.tolist()
             self.model_params["last_update"] = time.time()
-            # Reset the normalized local gradients for next global iteration
-            self.cli_last_grad = [0] * self.n_clients
         else:
             raise ValueError(f"Unsupported update rule {self.update_rule}!")
 
@@ -775,19 +746,19 @@ class FedNovaWebServer:
                         404, f"Client with pid {pid_cli} not found!"
                     )
                 id_cli = client_info["id"]
+                ## every client calls addGradientMatrix 
                 res = self.serv.addGradientMatrix(gradients_mat, pid_cli)
                 if res == 1:
                     # Success
                     out = self.msg_ok.copy()
-                    out[
-                        "msg"
-                    ] = f"Updated gradients matrix for client with pid = {pid_cli}!"
+                    out["msg"] = f"Updated gradients matrix for client with pid = {pid_cli}!"
                     cherrypy.response.status = 200
                     # a single client has contributed to the model
                     if id_cli not in self.clients_done_training:
                         self.clients_done_training.append(id_cli)
 
                     if len(self.clients_done_training) >= self.serv.n_clients:
+                        ## only ONE client (the last client) thread updates all the weights
                         res2 = self.serv.updateWeights()
 
                     return json.dumps(out)
