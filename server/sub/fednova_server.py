@@ -87,7 +87,7 @@ class FedNovaServer:
         iterations, hyperparameters, ...)
         - out_json_path: path where to store updated information
         - update_type: string indicating the update rule to be used; default
-        "FedNova" (TODO: add support for "classical" FL)
+        "FedNova", "FedAvg".
 
         ### Exposed API
 
@@ -118,7 +118,7 @@ class FedNovaServer:
         self.saveStateJson()
 
         # Keys of the client dictionary that need to be provided at registration
-        self._cli_params_input = ["pid", "capabilities"]  # TODO: decide the syntax
+        self._cli_params_input = ["pid", "capabilities"]
         # Keys of the client dictionary after registration (add "id")
         self._cli_params = ["id", "pid", "capabilities"]
         self._cli_capabilities_params = [
