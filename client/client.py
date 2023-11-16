@@ -7,14 +7,16 @@ import time
 import sys
 
 from model import CurveFitter, targetFunction
+from .config import *
 
 
 class ClientNode:
     PID = str(getpid())
     server_port = ""
-    addr = "http://localhost:"
-    client_model = CurveFitter(30, targetFunction)
+    addr = "http://127.0.0.1:"
+    client_model = CurveFitter(N_NEURONS_HIDDEN)
     num_rounds = 0
+    # The following value can be overwritten by the configuration JSON
     n_epochs = 100
     batch_size = 12
     cli_class = 5
@@ -22,6 +24,7 @@ class ClientNode:
     current_tx = np.array([])
     current_ty = np.array([])
     current_grad_matrix = np.array([])
+    last_params_update = 0
 
     def __init__(self, server_port, cli_info_path: str = None):
         """tell the new client node what port
@@ -50,10 +53,11 @@ class ClientNode:
             }
 
     def register_with_server(self):
+        """send post request to register as a client
+        with the current open server"""
         time.sleep(1)
-        """ send post request to register as a client
-            with the current open server """
-        print(f"{self.PID}: registering with server")
+        if DEBUG:
+            print(f"{self.PID}: registering with server")
         json_to_send = json.dumps(self.cli_info)
         r = requests.post(self.addr + "register", data=json_to_send)
         if r.status_code != 200 and r.status_code != 201:
@@ -62,10 +66,11 @@ class ClientNode:
             )
 
     def request_data_from_server(self):
+        """send a get request to receive allocated data
+        to do local training on from the server"""
         time.sleep(1)
-        """ send a get request to receive allocated data 
-            to do local training on from the server """
-        print(f"{self.PID}: requesting data - round {self.num_rounds}")
+        if DEBUG:
+            print(f"{self.PID}: requesting data - round {self.num_rounds}")
         # blocks until we get data from server
         r = requests.get(self.addr + f"dataset?pid={self.PID}")
         if r.status_code != 201 and r.status_code != 200:
@@ -74,9 +79,13 @@ class ClientNode:
             )
         data = r.json()
         t_x = np.array(data["x_tr"])
+        t_x = t_x.reshape((len(t_x), 1))
         t_y = np.array(data["y_tr"])
+        t_y = t_y.reshape((len(t_y), 1))
         self.current_tx = t_x
         self.current_ty = t_y
+        if DEBUG:
+            print("N. train elements: ", len(t_x))
         return t_x, t_y
 
     def request_updated_weights_from_server(self):
@@ -84,7 +93,8 @@ class ClientNode:
         we then request the updated global weights before
         starting the process over again so all clients are
         synced"""
-        print(f"{self.PID}: requesting global weights - round {self.num_rounds}")
+        if DEBUG:
+            print(f"{self.PID}: requesting global weights - round {self.num_rounds}")
         # blocks until we get the data from server
         r = requests.get(self.addr + f"weights")
         if r.status_code != 201 and r.status_code != 200:
@@ -92,9 +102,11 @@ class ClientNode:
                 f"{self.PID}: bad response from server on request weights - round {self.num_rounds}"
             )
 
-        # new global params should replace local
+        # New global params should replace local only if timestamp is new!
         model_params = r.json()
-        self.client_model.assignParameters(np.array(model_params["weights"]))
+        if model_params["last_update"] > self.last_params_update:
+            self.client_model.assignParameters(np.array(model_params["weights"]))
+            self.last_params_update = model_params["last_update"]
 
     def train_with_new_data(self, t_x, t_y):
         """class method to do the training of current
@@ -104,9 +116,14 @@ class ClientNode:
         start_time = time.time()
         # if (self.num_rounds%10 == 0 and self.num_rounds != 0):
         #    self.learning_rate /= 2
-        self.current_grad_matrix = self.client_model.train(
-            self.n_epochs, self.learning_rate, 1
+        self.current_grad_matrix, mse_lst = self.client_model.train(
+            self.n_epochs,
+            self.learning_rate,
+            self.batch_size,
         )
+        if DEBUG:
+            print(f"MSE before: {mse_lst[0]}; MSE after: {mse_lst[-1]}")
+            print("Shape of gradient matrix: ", self.current_grad_matrix.shape)
         end_time = time.time()
         train_time = end_time - start_time
         json_dict = {"gradients": self.current_grad_matrix.tolist(), "time": train_time}
@@ -127,9 +144,10 @@ class ClientNode:
 def main():
     server_port = "9099"
     if len(sys.argv) > 1:
-        # Argv[1] contains path
+        # Argv[1] contains path with client settings
         my_node = ClientNode(server_port, str(sys.argv[1]))
     else:
+        # If no path is passed, default client is instantiated
         my_node = ClientNode(server_port)
 
     registered = False
@@ -139,13 +157,15 @@ def main():
             my_node.register_with_server()
             registered = True
         except:
-            print(f"Registration attempt {att} failed")
+            if DEBUG:
+                print(f"Registration attempt {att} failed")
             att += 1
             time.sleep(1)
 
         if att >= 50:
             return 0
 
+    my_node.request_updated_weights_from_server()
     t_x, t_y = my_node.request_data_from_server()
     while 1:
         try:

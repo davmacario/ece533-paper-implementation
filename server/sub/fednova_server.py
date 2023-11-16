@@ -11,15 +11,14 @@ import threading
 import matplotlib.pyplot as plt
 
 from .config import *
-from model import CurveFitter, targetFunction
+from model import mse, CurveFitter, targetFunction
 
-fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
-plt.pause(0.001)
+#fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
+#plt.pause(0.001)
 
 first = 1
 
-
-def plot_current_model(webserver, pause: bool):
+def plot_current_model(webserver, pause: bool, new_fig: bool = False):
     global first
     x_plot = np.linspace(0, 1, 1000)
     y_plot_est = np.zeros((1000, 1))
@@ -27,8 +26,6 @@ def plot_current_model(webserver, pause: bool):
         # Need to center the test elements
         y = webserver.serv.model.forward(x_plot[i])[0]
         y_plot_est[i] = y
-
-    # fig.clear()
 
     ax.plot(x_plot, y_plot_est, color=(0, 0, 1), label="NN output")
     if first:
@@ -50,11 +47,15 @@ class FedNovaServer:
     """
     FedNovaServer class
     ---
+
     ### Attributes
-    - Private:
-      - _cli_registered
-    - Public:
-      - n_clients
+
+    (Private)
+    - _cli_registered
+
+    (Public)
+    - n_clients
+    - cli_last_grad: Vector containing the update term from each client at every iteration;
     TODO
     """
 
@@ -85,7 +86,7 @@ class FedNovaServer:
         iterations, hyperparameters, ...)
         - out_json_path: path where to store updated information
         - update_type: string indicating the update rule to be used; default
-        "FedNova" (TODO: add support for "classical" FL)
+        "FedNova", "FedAvg".
 
         ### Exposed API
 
@@ -116,10 +117,15 @@ class FedNovaServer:
         self.saveStateJson()
 
         # Keys of the client dictionary that need to be provided at registration
-        self._cli_params_input = ["pid", "capabilities"]  # TODO: decide the syntax
+        self._cli_params_input = ["pid", "capabilities"]
         # Keys of the client dictionary after registration (add "id")
         self._cli_params = ["id", "pid", "capabilities"]
-        self._cli_capabilities_params = ["n_epochs", "batch_size", "cli_class"]
+        self._cli_capabilities_params = [
+            "n_epochs",
+            "batch_size",
+            "cli_class",
+            "learning_rate",
+        ]
 
         # Model
         self._valid_update_rules = ["FedNova", "FedAvg"]
@@ -128,16 +134,16 @@ class FedNovaServer:
                 f"Specified update rule {update_type} is not valid!\nValid rules are: {self._valid_update_rules}"
             )
         self.update_rule = update_type
-        self.n_neurons_hidden = N_NEURONS_HIDDEN
-        self.n_train = N_TRAIN
+        self.n_neurons_hidden = self._server_info["parameters"]["n_neurons_hidden"]
+        self.n_train = self._server_info["parameters"]["n_train"]
         self.n_tr_cli = [0] * self.n_clients
         self.p_i = [0] * self.n_clients
         self.tau_i = [0] * self.n_clients
-        self.tau_eff = 0.1
-        self.eta_global = ETA  # Learning rate for global update
+        self.tau_eff = 0
         self.model = CurveFitter(self.n_neurons_hidden, targetFunction)
-        self.eta = ETA  # Learning rate for local update (NOT USED...)
+        # Learning rate for local update (NOT USED...)
         # Clients use local learning rate!
+        self.eta = self._server_info["parameters"]["learning_rate"]
         self.model.setLearningRate(self.eta)
         # NOTE: maybe need to change range in training set 'x'
         self.train_x, self.train_y = self.model.createTrainSet(self.n_train)
@@ -154,6 +160,14 @@ class FedNovaServer:
         # Each element is the dataset for the corresponding client in JSON format
         self.cli_data_sets = []
         self.cli_last_grad = [0] * n_clients
+        self.cli_last_update = [0] * n_clients
+        ## this will store the update parameters of the calling client
+        ## p_i is the proportion of data given to client i and tau_i is the number of updates
+        self.cli_last_update_params = [{'p_i':0,'tau_i':0} for n in self.cli_last_update]
+        self.cli_last_tau = [0] * n_clients
+
+        # Store stats
+        self.mse_per_global_iter = []
 
     def updateTimestamp(self) -> str:
         """
@@ -219,8 +233,6 @@ class FedNovaServer:
         new_id = self.getFreeID()
 
         # Check for info validity
-        if DEBUG:
-            print(cl_info)
         if not self.checkValidClient(cl_info):
             new_id = -2
         elif self.searchClient("pid", cl_info["pid"]) != {}:
@@ -285,6 +297,8 @@ class FedNovaServer:
         """
         Return true if all the expected clients have registered
         """
+        if DEBUG and len(self.cli_map_PID) == self.n_clients:
+            print(f"All {self.n_clients} clients have registered!")
         return len(self.cli_map_PID) == self.n_clients
 
     def splitTrainSet(self):
@@ -340,13 +354,10 @@ class FedNovaServer:
         self.updateTimestamp()
         self.saveStateJson()
 
-        return 1
+        if DEBUG:
+            print("Training set was split!")
 
-    def initTauEff(self):
-        """Evaluate tau_eff for FedNova update rule, based on the clients parameters"""
-        ## TODO init tau eff based on fedavg vs fednova rules ## 
-        
-        self.tau_eff
+        return 1
 
     def addGradientMatrix(
         self, grad_mat: np.ndarray, user_val: int, attr_key: str = "pid"
@@ -366,23 +377,53 @@ class FedNovaServer:
         ### Return value(s)
         - 1 if successful update
         """
+
+        ## in this function we want to store the relevant information 
+        ## needed for updateweights so that all the clients data is in 
+        ## the correct place 
+
         if attr_key == "pid" and user_val not in self.cli_map_PID:
             raise ValueError(f"PID {user_val} not found among registered clients!")
         elif attr_key == "id" and (user_val < 0 or user_val >= self.n_clients):
             raise ValueError(f"Invalid user ID {user_val}")
+        if DEBUG:
+            print("Shape of gradient matrix: ", grad_mat.shape)
 
         cli = self.searchClient(attr_key, user_val)
         if cli == {}:
             warnings.warn(f"Unable to find client with {attr_key} = {user_val}")
             return 0
         cli_id = cli["id"]
-        tau_cli = grad_mat.shape[1]
-        a = np.ones((tau_cli, 1))  # FIXME: can be modified for different updates
-        norm_a = np.linalg.norm(a)
-        norm_batch_grad = np.dot(grad_mat, a) / norm_a
-        self.cli_last_grad[cli_id] = norm_batch_grad.reshape((len(norm_batch_grad), 1))
+        if DEBUG:
+            print("storing values for [" + str(cli_id) + "]")
+        ## get number of update steps for client i
+        self.cli_last_update_params[cli_id]['tau_i'] = grad_mat.shape[1]
+        ## get proportion of data given to client i
+        self.cli_last_update_params[cli_id]['p_i'] = self.p_i[cli_id]
+        self.cli_last_grad[cli_id] = grad_mat
 
         return 1
+
+    def get_a(self, tau_i: int, method: str = "Vanilla SGD") -> np.ndarray:
+        """
+        Evaluate the vector 'a', used to compute the update term for each client
+        from the matrix of gradients.
+
+        ### Input parameters
+        - tau_i: number of local iterations at current (i-th) client; it is the
+        length of vector 'a'
+        - method: string indicating the update method; based on this, the output
+        vector will be built in different ways
+
+        ### Output
+        - a: column ndarray
+        """
+        if tau_i <= 0 or not isinstance(tau_i, int):
+            raise ValueError("Unsupported value for tau_i")
+
+        ## a is always a vector of tau_i ones no matter the update type
+        a = np.ones((tau_i, 1))
+        return a
 
     def updateWeights(self) -> int:
         """
@@ -399,39 +440,79 @@ class FedNovaServer:
         assert self.update_rule in self._valid_update_rules  # Shouldn't need it
 
         if self.update_rule.lower() == "fedavg":
-            # this will be used to show bad convergence using a vanilla SGD model
-            sum_upd = 0
+            ## this will be used to show bad convergence using fedavg
+            ## calculate tau_eff 
+            if DEBUG:
+                print("[1] updating weights fedavg style")
+            tau_eff = 0
             for i in range(self.n_clients):
-                sum_upd += (1 / self.n_clients) * 0.001 * self.cli_last_grad[i]
-            self.model.w = self.model.w - 10.0 * sum_upd
+                tau_eff += self.cli_last_update_params[i]['p_i']*self.cli_last_update_params[i]['tau_i']
+            ## calculate weightings
+            final_sum = 0
+            for i in range(self.n_clients):
+                ## for each sum we calculate w_i and d_i and multiply together
+                final_sum += (self.cli_last_update_params[i]['p_i']*self.cli_last_update_params[i]['tau_i'] / tau_eff) * \
+                    np.dot(self.cli_last_grad[i], self.get_a(self.cli_last_update_params[i]['tau_i'])) / \
+                         self.cli_last_update_params[i]['tau_i']
+            final_sum *= self.eta
+            final_sum *= tau_eff
+            self.model.w = self.model.w - final_sum
             self.model_params["weights"] = self.model.w.tolist()
             self.model_params["last_update"] = time.time()
-            # Reset the normalized local gradients for next global iteration
-            self.cli_last_grad = [0] * self.n_clients
 
-            self.n_update_iterations += 1
-            return 1
-
-        if self.update_rule.lower() == "fednova":
-            # To perform global update need:
-            # - tau_eff
-            # - p_i
-            # Can perform global update
-            sum_upd = 0
+        elif self.update_rule.lower() == "fednova":
+            ## the only difference with fednova is that w_i is replaced by p_i
+            if DEBUG:
+                print("[1] updating weights fednova style")
+            tau_eff = 0
             for i in range(self.n_clients):
-                sum_upd += (
-                    (1 / self.n_clients) * self.eta_global * self.cli_last_grad[i]
-                )
-            self.model.w = self.model.w - 10.0 * sum_upd
+                tau_eff += self.cli_last_update_params[i]['p_i']*self.cli_last_update_params[i]['tau_i']
+            ## calculate weightings
+            final_sum = 0
+            for i in range(self.n_clients):
+                ## for each sum we calculate w_i and d_i and multiply together
+                final_sum += self.cli_last_update_params[i]['p_i'] * \
+                    np.dot(self.cli_last_grad[i], self.get_a(self.cli_last_update_params[i]['tau_i'])) / \
+                        self.cli_last_update_params[i]['tau_i']
+            final_sum *= self.eta
+            final_sum *= tau_eff
+            self.model.w = self.model.w - final_sum
             self.model_params["weights"] = self.model.w.tolist()
             self.model_params["last_update"] = time.time()
-            # Reset the normalized local gradients for next global iteration
-            self.cli_last_grad = [0] * self.n_clients
-
-            self.n_update_iterations += 1
-            return 1
         else:
             raise ValueError(f"Unsupported update rule {self.update_rule}!")
+
+        # Evaluate the MSE after the update
+        curr_mse = self.getMSE()
+        self.mse_per_global_iter.append(curr_mse)
+        if DEBUG:
+            print(f"Iteration {self.n_update_iterations}:")
+            print(f"> Current MSE: {curr_mse}")
+
+        self.n_update_iterations += 1
+        return 1
+
+    def learningRate(self) -> float:
+        """Fix the learning rate - depending on the global iterations."""
+        if self.n_update_iterations >= 200:
+            return 0.1
+        else:
+            return 1
+
+    def getMSE(self):
+        """
+        Evaluate the Mean Squared Error on the whole training set with the
+        current model parameters.
+        """
+        if DEBUG:
+            print(self.model.w.shape)
+            print("Input: ", self.train_x[0])
+            print("Output: ", self.model.forward(self.train_x[0])[0])
+        y_est = np.zeros((self.train_y.shape[0], 1))
+        for i in range(len(self.train_x)):
+            y_est[i], _ = self.model.forward(self.train_x[i])
+
+        return mse(self.train_y, y_est)
 
     def getIP(self) -> str:
         """Return IP address contained in the server information"""
@@ -537,12 +618,15 @@ class FedNovaWebServer:
                 # Dont send data until all clients have requested
                 if cli_id not in self.clients_requesting:
                     self.clients_requesting.append(cli_id)
+
                 if len(self.clients_requesting) < self.serv.n_clients:
                     self.response_ready.clear()
                 else:
                     self.response_ready.set()
                 # Wait here
                 self.response_ready.wait()
+                # If here, response_ready has been set, meaning that all clients
+                # have been added to the "clients_requesting" list
                 # Now clear this counter
                 time.sleep(1)  # do this so that clients dont get stuck
                 self.clients_requesting = []
@@ -569,10 +653,12 @@ class FedNovaWebServer:
                     self.ready_to_continue.clear()
                 else:
                     self.ready_to_continue.set()
-                # Wait here
+                # Wait here until Event is set()
                 self.ready_to_continue.wait()
-                # Now clear this counter
-                time.sleep(1)
+                # If here, ready_to_continue has been set, i.e., all clients
+                # have successfully registered (1st call) or updated their model
+                # changes
+                time.sleep(1)  # Leave some time for all cli to sync
                 self.clients_done_training = []
 
                 # We can be certain that the new model has been
@@ -609,6 +695,9 @@ class FedNovaWebServer:
                     out["params"]["pid"] = body["pid"]
                     self.serv.saveStateJson()
                     cherrypy.response.status = 201
+                    # Fix blocking before first iteration - registered client is ready for
+                    # receiving weights!
+                    self.clients_done_training.append(ret_code_add)
                     return json.dumps(out)
                 elif ret_code_add == -1:
                     # Required number reached
@@ -660,18 +749,19 @@ class FedNovaWebServer:
                         404, f"Client with pid {pid_cli} not found!"
                     )
                 id_cli = client_info["id"]
+                ## every client calls addGradientMatrix 
                 res = self.serv.addGradientMatrix(gradients_mat, pid_cli)
                 if res == 1:
                     # Success
                     out = self.msg_ok.copy()
-                    out[
-                        "msg"
-                    ] = f"Updated gradients matrix for client with pid = {pid_cli}!"
+                    out["msg"] = f"Updated gradients matrix for client with pid = {pid_cli}!"
                     cherrypy.response.status = 200
                     # a single client has contributed to the model
                     if id_cli not in self.clients_done_training:
                         self.clients_done_training.append(id_cli)
-                    if len(self.clients_done_training) == self.serv.n_clients:
+
+                    if len(self.clients_done_training) >= self.serv.n_clients:
+                        ## only ONE client (the last client) thread updates all the weights
                         res2 = self.serv.updateWeights()
 
                     return json.dumps(out)
@@ -707,8 +797,15 @@ class FedNovaWebServer:
 
 
 def main():
-    webserver = FedNovaWebServer(N_CLIENTS, update_type="FedAvg")
-
+    if len(sys.argv) > 1:
+        # Argv[1] contains path with client settings
+        upd_type = sys.argv[1]
+    else:
+        # If no path is passed, default client is instantiated
+        upd_type = "FedNova"
+    print(f"Update type: {upd_type}")
+    webserver = FedNovaWebServer(N_CLIENTS, update_type=upd_type)
+    
     cherrypy.tree.mount(webserver, "/", webserver.ws_config)
     cherrypy.config.update(
         {"server.socket_host": webserver.ip_out, "server.socket_port": webserver.port}
@@ -717,11 +814,17 @@ def main():
 
     try:
         while True:
-            time.sleep(10)
-            plot_current_model(webserver, pause=False)
+            time.sleep(1)
+            if webserver.serv.n_update_iterations >= 100:
+                cherrypy.engine.stop()
+                # plot_current_model(webserver, pause=True, new_fig=True)
+                total_mse_plot = np.array(webserver.serv.mse_per_global_iter)
+                np.save("./mse_arrays/" + upd_type.lower() + "/" + str(os.getpid()), total_mse_plot)
+                break
+            # plot_current_model(webserver, pause=False)
     except KeyboardInterrupt:
         cherrypy.engine.stop()
-        plot_current_model(webserver, pause=True)
+        # plot_current_model(webserver, pause=True, new_fig=True)
 
 
 if __name__ == "__main__":
