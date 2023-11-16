@@ -13,8 +13,8 @@ import matplotlib.pyplot as plt
 from .config import *
 from model import mse, CurveFitter, targetFunction
 
-fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
-plt.pause(0.001)
+#fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
+#plt.pause(0.001)
 
 first = 1
 
@@ -394,7 +394,8 @@ class FedNovaServer:
             warnings.warn(f"Unable to find client with {attr_key} = {user_val}")
             return 0
         cli_id = cli["id"]
-        print("storing values for [" + str(cli_id) + "]")
+        if DEBUG:
+            print("storing values for [" + str(cli_id) + "]")
         ## get number of update steps for client i
         self.cli_last_update_params[cli_id]['tau_i'] = grad_mat.shape[1]
         ## get proportion of data given to client i
@@ -441,7 +442,8 @@ class FedNovaServer:
         if self.update_rule.lower() == "fedavg":
             ## this will be used to show bad convergence using fedavg
             ## calculate tau_eff 
-            print("[1] updating weights fedavg style")
+            if DEBUG:
+                print("[1] updating weights fedavg style")
             tau_eff = 0
             for i in range(self.n_clients):
                 tau_eff += self.cli_last_update_params[i]['p_i']*self.cli_last_update_params[i]['tau_i']
@@ -460,7 +462,8 @@ class FedNovaServer:
 
         elif self.update_rule.lower() == "fednova":
             ## the only difference with fednova is that w_i is replaced by p_i
-            print("[1] updating weights fednova style")
+            if DEBUG:
+                print("[1] updating weights fednova style")
             tau_eff = 0
             for i in range(self.n_clients):
                 tau_eff += self.cli_last_update_params[i]['p_i']*self.cli_last_update_params[i]['tau_i']
@@ -794,9 +797,15 @@ class FedNovaWebServer:
 
 
 def main():
-    print(f"Update type: {UPD_TYPE}")
-    webserver = FedNovaWebServer(N_CLIENTS, update_type=UPD_TYPE)
-
+    if len(sys.argv) > 1:
+        # Argv[1] contains path with client settings
+        upd_type = sys.argv[1]
+    else:
+        # If no path is passed, default client is instantiated
+        upd_type = "FedNova"
+    print(f"Update type: {upd_type}")
+    webserver = FedNovaWebServer(N_CLIENTS, update_type=upd_type)
+    
     cherrypy.tree.mount(webserver, "/", webserver.ws_config)
     cherrypy.config.update(
         {"server.socket_host": webserver.ip_out, "server.socket_port": webserver.port}
@@ -805,11 +814,17 @@ def main():
 
     try:
         while True:
-            time.sleep(10)
-            plot_current_model(webserver, pause=False)
+            time.sleep(1)
+            if webserver.serv.n_update_iterations >= 100:
+                cherrypy.engine.stop()
+                # plot_current_model(webserver, pause=True, new_fig=True)
+                total_mse_plot = np.array(webserver.serv.mse_per_global_iter)
+                np.save("./mse_arrays/" + upd_type.lower() + "/" + str(os.getpid()), total_mse_plot)
+                break
+            # plot_current_model(webserver, pause=False)
     except KeyboardInterrupt:
         cherrypy.engine.stop()
-        plot_current_model(webserver, pause=True, new_fig=True)
+        # plot_current_model(webserver, pause=True, new_fig=True)
 
 
 if __name__ == "__main__":

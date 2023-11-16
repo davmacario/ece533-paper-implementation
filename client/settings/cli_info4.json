@@ -1,8 +1,8 @@
 {
     "capabilities": {
-        "n_epochs": 15,
+        "n_epochs": 50,
         "batch_size": 12,
-        "cli_class": 8,
+        "cli_class": 2,
         "learning_rate": 0.0001
     }
 }

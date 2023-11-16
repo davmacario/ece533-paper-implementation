@@ -2,6 +2,6 @@
 Configuration file - it contains constants
 """
 VERB = True
-DEBUG = True
+DEBUG = False
 
 N_NEURONS_HIDDEN = 30

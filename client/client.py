@@ -56,7 +56,8 @@ class ClientNode:
         """send post request to register as a client
         with the current open server"""
         time.sleep(1)
-        print(f"{self.PID}: registering with server")
+        if DEBUG:
+            print(f"{self.PID}: registering with server")
         json_to_send = json.dumps(self.cli_info)
         r = requests.post(self.addr + "register", data=json_to_send)
         if r.status_code != 200 and r.status_code != 201:
@@ -68,7 +69,8 @@ class ClientNode:
         """send a get request to receive allocated data
         to do local training on from the server"""
         time.sleep(1)
-        print(f"{self.PID}: requesting data - round {self.num_rounds}")
+        if DEBUG:
+            print(f"{self.PID}: requesting data - round {self.num_rounds}")
         # blocks until we get data from server
         r = requests.get(self.addr + f"dataset?pid={self.PID}")
         if r.status_code != 201 and r.status_code != 200:
@@ -91,7 +93,8 @@ class ClientNode:
         we then request the updated global weights before
         starting the process over again so all clients are
         synced"""
-        print(f"{self.PID}: requesting global weights - round {self.num_rounds}")
+        if DEBUG:
+            print(f"{self.PID}: requesting global weights - round {self.num_rounds}")
         # blocks until we get the data from server
         r = requests.get(self.addr + f"weights")
         if r.status_code != 201 and r.status_code != 200:
@@ -154,7 +157,8 @@ def main():
             my_node.register_with_server()
             registered = True
         except:
-            print(f"Registration attempt {att} failed")
+            if DEBUG:
+                print(f"Registration attempt {att} failed")
             att += 1
             time.sleep(1)
 
