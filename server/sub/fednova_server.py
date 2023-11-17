@@ -13,14 +13,20 @@ import matplotlib.pyplot as plt
 from .config import *
 from model import mse, CurveFitter, targetFunction
 
-# fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
-# plt.pause(0.001)
 
 first = 1
 
+fig = None
+ax = None
+
 
 def plot_current_model(webserver, pause: bool, new_fig: bool = False):
-    global first
+    """Display the current model results"""
+    global fig, ax, first
+
+    if fig is None and ax is None:
+        fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
+        plt.pause(0.001)
     x_plot = np.linspace(0, 1, 1000)
     y_plot_est = np.zeros((1000, 1))
     for i in range(len(x_plot)):
