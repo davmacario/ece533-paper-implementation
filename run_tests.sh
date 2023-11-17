@@ -1,19 +1,19 @@
 #!/bin/bash
 
 run_fednova() {
-    python ./main_serv.py FedNova &
+    python3 ./main_serv.py FedNova &
     pid_a=$!
 
-    python ./main_client.py ./client/settings/cli_info1.json &
+    python3 ./main_client.py ./client/settings/cli_info1.json &
     pid_b=$! 
 
-    python ./main_client.py ./client/settings/cli_info2.json &
+    python3 ./main_client.py ./client/settings/cli_info2.json &
     pid_c=$!
 
-    python ./main_client.py ./client/settings/cli_info3.json &
+    python3 ./main_client.py ./client/settings/cli_info3.json &
     pid_d=$!
 
-    python ./main_client.py ./client/settings/cli_info4.json &
+    python3 ./main_client.py ./client/settings/cli_info4.json &
     pid_e=$!
 
     # Wait for all programs to finish
@@ -25,19 +25,19 @@ run_fednova() {
 }
 
 run_fedavg() {
-    python ./main_serv.py FedAvg &
+    python3 ./main_serv.py FedAvg &
     pid_a=$!
 
-    python ./main_client.py ./client/settings/cli_info1.json &
+    python3 ./main_client.py ./client/settings/cli_info1.json &
     pid_b=$! 
 
-    python ./main_client.py ./client/settings/cli_info2.json &
+    python3 ./main_client.py ./client/settings/cli_info2.json &
     pid_c=$!
 
-    python ./main_client.py ./client/settings/cli_info3.json &
+    python3 ./main_client.py ./client/settings/cli_info3.json &
     pid_d=$!
 
-    python ./main_client.py ./client/settings/cli_info4.json &
+    python3 ./main_client.py ./client/settings/cli_info4.json &
     pid_e=$!
 
     # Wait for all programs to finish
