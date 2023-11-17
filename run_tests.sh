@@ -49,13 +49,13 @@ run_fedavg() {
 }
 
 # Number of times to repeat
-num_repeats=50  # Change this number to your desired repetition count
+num_repeats=39  # Change this number to your desired repetition count
 
 # Loop to run the programs multiple times
-for ((i = 0; i < num_repeats; i++)); do
-    echo "Running iteration $i fednova"
-    run_fednova
-done
+# for ((i = 0; i < num_repeats; i++)); do
+#    echo "Running iteration $i fednova"
+#    run_fednova
+# done
 
 echo "done running fednova tests" 
 
