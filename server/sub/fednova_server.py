@@ -1,18 +1,17 @@
-import cherrypy
-from datetime import datetime
 import json
-import numpy as np
 import os
 import sys
+import threading
 import time
 import warnings
+from datetime import datetime
 
-import threading
+import cherrypy
 import matplotlib.pyplot as plt
+import numpy as np
+from model import CurveFitter, mse, targetFunction
 
-from .config import *
-from model import mse, CurveFitter, targetFunction
-
+from .config import DEBUG, N_CLIENTS
 
 first = 1
 
@@ -171,7 +170,7 @@ class FedNovaServer:
         # This will store the update parameters of the calling client
         # p_i is the proportion of data given to client i and tau_i is the number of updates
         self.cli_last_update_params = [
-            {"p_i": 0, "tau_i": 0} for n in self.cli_last_update
+            {"p_i": 0, "tau_i": 0} for _ in self.cli_last_update
         ]
         self.cli_last_tau = [0] * n_clients
 
@@ -318,7 +317,8 @@ class FedNovaServer:
         """
         if not self.allCliRegistered():
             raise ValueError(
-                f"Not all clients have registered! {len(self.cli_map_PID)}/{self.n_clients}"
+                f"Not all clients have registered! {len(self.cli_map_PID)}\
+                        /{self.n_clients}"
             )
 
         capabilities = [
@@ -341,8 +341,6 @@ class FedNovaServer:
                 / cli_curr["capabilities"]["batch_size"]
             )
             cli_curr["capabilities"]["tau"] = self.tau_i[i]
-            # TODO: confirm this code works - are the updates on cli_curr reflected on the
-            # values in self._server_info?
         self.p_i = [n / self.n_train for n in self.n_tr_cli]
 
         assert sum(self.n_tr_cli) == self.n_train
@@ -413,19 +411,19 @@ class FedNovaServer:
 
         return 1
 
-    def get_a(self, tau_i: int, method: str = "Vanilla SGD") -> np.ndarray:
+    def get_a(self, tau_i: int) -> np.ndarray:
         """
         Evaluate the vector 'a', used to compute the update term for each client
         from the matrix of gradients.
+        [This implementation assumes Vanilla SGD as local optimizer, for which
+         a contains only ones]
 
         ### Input parameters
         - tau_i: number of local iterations at current (i-th) client; it is the
         length of vector 'a'
-        - method: string indicating the update method; based on this, the output
-        vector will be built in different ways
 
         ### Output
-        - a: column ndarray
+        - a: column ndarray of length tau_i
         """
         if tau_i <= 0 or not isinstance(tau_i, int):
             raise ValueError("Unsupported value for tau_i")
@@ -449,20 +447,20 @@ class FedNovaServer:
         assert self.update_rule in self._valid_update_rules  # Shouldn't need it
 
         if self.update_rule.lower() == "fedavg":
-            ## this will be used to show bad convergence using fedavg
-            ## calculate tau_eff
+            # this will be used to show bad convergence using fedavg
             if DEBUG:
                 print("[1] updating weights fedavg style")
+            # calculate tau_eff
             tau_eff = 0
             for i in range(self.n_clients):
                 tau_eff += (
                     self.cli_last_update_params[i]["p_i"]
                     * self.cli_last_update_params[i]["tau_i"]
                 )
-            ## calculate weightings
+            # calculate weightings
             final_sum = 0
             for i in range(self.n_clients):
-                ## for each sum we calculate w_i and d_i and multiply together
+                # for each sum we calculate w_i and d_i and multiply together
                 final_sum += (
                     (
                         self.cli_last_update_params[i]["p_i"]
@@ -482,7 +480,7 @@ class FedNovaServer:
             self.model_params["last_update"] = time.time()
 
         elif self.update_rule.lower() == "fednova":
-            ## the only difference with fednova is that w_i is replaced by p_i
+            # the only difference with fednova is that w_i is replaced by p_i
             if DEBUG:
                 print("[1] updating weights fednova style")
             tau_eff = 0
@@ -491,12 +489,12 @@ class FedNovaServer:
                     self.cli_last_update_params[i]["p_i"]
                     * self.cli_last_update_params[i]["tau_i"]
                 )
-            ## calculate weightings
+            # calculate weightings
             final_sum = 0
             for i in range(self.n_clients):
-                ## for each sum we calculate w_i and d_i and multiply together
+                # for each sum we calculate w_i and d_i and multiply together
                 final_sum += (
-                    self.cli_last_update_params[i]["p_i"]
+                    self.cli_last_update_params[i]["p_i"]  # NOTE
                     * np.dot(
                         self.cli_last_grad[i],
                         self.get_a(self.cli_last_update_params[i]["tau_i"]),
@@ -848,17 +846,17 @@ def main():
             time.sleep(1)
             if webserver.serv.n_update_iterations >= 100:
                 cherrypy.engine.stop()
-                # plot_current_model(webserver, pause=True, new_fig=True)
+                plot_current_model(webserver, pause=True, new_fig=True)
                 total_mse_plot = np.array(webserver.serv.mse_per_global_iter)
                 np.save(
                     "./mse_arrays/" + upd_type.lower() + "/" + str(os.getpid()),
                     total_mse_plot,
                 )
                 break
-            # plot_current_model(webserver, pause=False)
+            plot_current_model(webserver, pause=False)
     except KeyboardInterrupt:
         cherrypy.engine.stop()
-        # plot_current_model(webserver, pause=True, new_fig=True)
+        plot_current_model(webserver, pause=True, new_fig=True)
 
 
 if __name__ == "__main__":
