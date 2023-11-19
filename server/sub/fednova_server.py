@@ -815,11 +815,11 @@ def main():
     try:
         while True:
             time.sleep(1)
-            if webserver.serv.n_update_iterations >= 150:
+            if webserver.serv.n_update_iterations >= 100:
                 cherrypy.engine.stop()
                 # plot_current_model(webserver, pause=True, new_fig=True)
                 total_mse_plot = np.array(webserver.serv.mse_per_global_iter)
-                np.save("./tests/mse_arrays_2/" + upd_type.lower() + "/" + str(os.getpid()), total_mse_plot)
+                np.save("./tests/mse_arrays_4/" + upd_type.lower() + "/" + str(os.getpid()), total_mse_plot)
                 break
             # plot_current_model(webserver, pause=False)
     except KeyboardInterrupt:
