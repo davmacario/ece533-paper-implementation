@@ -13,10 +13,11 @@ import matplotlib.pyplot as plt
 from .config import *
 from model import mse, CurveFitter, targetFunction
 
-#fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
-#plt.pause(0.001)
+# fig, ax = plt.subplots(figsize=(8, 6), tight_layout=True)
+# plt.pause(0.001)
 
 first = 1
+
 
 def plot_current_model(webserver, pause: bool, new_fig: bool = False):
     global first
@@ -161,9 +162,11 @@ class FedNovaServer:
         self.cli_data_sets = []
         self.cli_last_grad = [0] * n_clients
         self.cli_last_update = [0] * n_clients
-        ## this will store the update parameters of the calling client
-        ## p_i is the proportion of data given to client i and tau_i is the number of updates
-        self.cli_last_update_params = [{'p_i':0,'tau_i':0} for n in self.cli_last_update]
+        # This will store the update parameters of the calling client
+        # p_i is the proportion of data given to client i and tau_i is the number of updates
+        self.cli_last_update_params = [
+            {"p_i": 0, "tau_i": 0} for n in self.cli_last_update
+        ]
         self.cli_last_tau = [0] * n_clients
 
         # Store stats
@@ -378,9 +381,9 @@ class FedNovaServer:
         - 1 if successful update
         """
 
-        ## in this function we want to store the relevant information 
-        ## needed for updateweights so that all the clients data is in 
-        ## the correct place 
+        ## in this function we want to store the relevant information
+        ## needed for updateweights so that all the clients data is in
+        ## the correct place
 
         if attr_key == "pid" and user_val not in self.cli_map_PID:
             raise ValueError(f"PID {user_val} not found among registered clients!")
@@ -397,9 +400,9 @@ class FedNovaServer:
         if DEBUG:
             print("storing values for [" + str(cli_id) + "]")
         ## get number of update steps for client i
-        self.cli_last_update_params[cli_id]['tau_i'] = grad_mat.shape[1]
+        self.cli_last_update_params[cli_id]["tau_i"] = grad_mat.shape[1]
         ## get proportion of data given to client i
-        self.cli_last_update_params[cli_id]['p_i'] = self.p_i[cli_id]
+        self.cli_last_update_params[cli_id]["p_i"] = self.p_i[cli_id]
         self.cli_last_grad[cli_id] = grad_mat
 
         return 1
@@ -441,19 +444,31 @@ class FedNovaServer:
 
         if self.update_rule.lower() == "fedavg":
             ## this will be used to show bad convergence using fedavg
-            ## calculate tau_eff 
+            ## calculate tau_eff
             if DEBUG:
                 print("[1] updating weights fedavg style")
             tau_eff = 0
             for i in range(self.n_clients):
-                tau_eff += self.cli_last_update_params[i]['p_i']*self.cli_last_update_params[i]['tau_i']
+                tau_eff += (
+                    self.cli_last_update_params[i]["p_i"]
+                    * self.cli_last_update_params[i]["tau_i"]
+                )
             ## calculate weightings
             final_sum = 0
             for i in range(self.n_clients):
                 ## for each sum we calculate w_i and d_i and multiply together
-                final_sum += (self.cli_last_update_params[i]['p_i']*self.cli_last_update_params[i]['tau_i'] / tau_eff) * \
-                    np.dot(self.cli_last_grad[i], self.get_a(self.cli_last_update_params[i]['tau_i'])) / \
-                         self.cli_last_update_params[i]['tau_i']
+                final_sum += (
+                    (
+                        self.cli_last_update_params[i]["p_i"]
+                        * self.cli_last_update_params[i]["tau_i"]
+                        / tau_eff
+                    )
+                    * np.dot(
+                        self.cli_last_grad[i],
+                        self.get_a(self.cli_last_update_params[i]["tau_i"]),
+                    )
+                    / self.cli_last_update_params[i]["tau_i"]
+                )
             final_sum *= self.eta
             final_sum *= tau_eff
             self.model.w = self.model.w - final_sum
@@ -466,14 +481,22 @@ class FedNovaServer:
                 print("[1] updating weights fednova style")
             tau_eff = 0
             for i in range(self.n_clients):
-                tau_eff += self.cli_last_update_params[i]['p_i']*self.cli_last_update_params[i]['tau_i']
+                tau_eff += (
+                    self.cli_last_update_params[i]["p_i"]
+                    * self.cli_last_update_params[i]["tau_i"]
+                )
             ## calculate weightings
             final_sum = 0
             for i in range(self.n_clients):
                 ## for each sum we calculate w_i and d_i and multiply together
-                final_sum += self.cli_last_update_params[i]['p_i'] * \
-                    np.dot(self.cli_last_grad[i], self.get_a(self.cli_last_update_params[i]['tau_i'])) / \
-                        self.cli_last_update_params[i]['tau_i']
+                final_sum += (
+                    self.cli_last_update_params[i]["p_i"]
+                    * np.dot(
+                        self.cli_last_grad[i],
+                        self.get_a(self.cli_last_update_params[i]["tau_i"]),
+                    )
+                    / self.cli_last_update_params[i]["tau_i"]
+                )
             final_sum *= self.eta
             final_sum *= tau_eff
             self.model.w = self.model.w - final_sum
@@ -749,12 +772,14 @@ class FedNovaWebServer:
                         404, f"Client with pid {pid_cli} not found!"
                     )
                 id_cli = client_info["id"]
-                ## every client calls addGradientMatrix 
+                ## every client calls addGradientMatrix
                 res = self.serv.addGradientMatrix(gradients_mat, pid_cli)
                 if res == 1:
                     # Success
                     out = self.msg_ok.copy()
-                    out["msg"] = f"Updated gradients matrix for client with pid = {pid_cli}!"
+                    out[
+                        "msg"
+                    ] = f"Updated gradients matrix for client with pid = {pid_cli}!"
                     cherrypy.response.status = 200
                     # a single client has contributed to the model
                     if id_cli not in self.clients_done_training:
@@ -805,7 +830,7 @@ def main():
         upd_type = "FedNova"
     print(f"Update type: {upd_type}")
     webserver = FedNovaWebServer(N_CLIENTS, update_type=upd_type)
-    
+
     cherrypy.tree.mount(webserver, "/", webserver.ws_config)
     cherrypy.config.update(
         {"server.socket_host": webserver.ip_out, "server.socket_port": webserver.port}
@@ -820,6 +845,7 @@ def main():
                 # plot_current_model(webserver, pause=True, new_fig=True)
                 total_mse_plot = np.array(webserver.serv.mse_per_global_iter)
                 np.save("./tests/mse_arrays_4/" + upd_type.lower() + "/" + str(os.getpid()), total_mse_plot)
+
                 break
             # plot_current_model(webserver, pause=False)
     except KeyboardInterrupt:
