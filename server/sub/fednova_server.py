@@ -651,7 +651,7 @@ class FedNovaWebServer:
                 # If here, response_ready has been set, meaning that all clients
                 # have been added to the "clients_requesting" list
                 # Now clear this counter
-                time.sleep(1)  # do this so that clients dont get stuck
+                time.sleep(0.5)  # do this so that clients dont get stuck
                 self.clients_requesting = []
                 return json.dumps(self.serv.train_split_send[cli_id])
 
@@ -681,7 +681,7 @@ class FedNovaWebServer:
                 # If here, ready_to_continue has been set, i.e., all clients
                 # have successfully registered (1st call) or updated their model
                 # changes
-                time.sleep(1)  # Leave some time for all cli to sync
+                time.sleep(0.5)  # Leave some time for all cli to sync
                 self.clients_done_training = []
 
                 # We can be certain that the new model has been
@@ -844,10 +844,8 @@ def main():
                 cherrypy.engine.stop()
                 # plot_current_model(webserver, pause=True, new_fig=True)
                 total_mse_plot = np.array(webserver.serv.mse_per_global_iter)
-                np.save(
-                    "./mse_arrays/" + upd_type.lower() + "/" + str(os.getpid()),
-                    total_mse_plot,
-                )
+                np.save("./tests/mse_arrays_4/" + upd_type.lower() + "/" + str(os.getpid()), total_mse_plot)
+
                 break
             # plot_current_model(webserver, pause=False)
     except KeyboardInterrupt:

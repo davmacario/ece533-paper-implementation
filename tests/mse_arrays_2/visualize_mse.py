@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 
-num_to_plot = 40
+num_to_plot = 100
 
 list_of_fednova_paths = [n for n in os.listdir("./fednova/") if n[-3:] == "npy"]
 fednova_data = [np.load("./fednova/" + n) for n in list_of_fednova_paths]
