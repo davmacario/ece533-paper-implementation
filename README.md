@@ -1,5 +1,11 @@
 # ECE 533 - Paper implementation project
 
+![Python Version](https://img.shields.io/badge/python-3.10-informational?style=flat&logo=python&logoColor=white)
+
+<!-- markdownlint-disable MD033 -->
+<img src="./assets/University_of_Illinois_at_Chicago_circle_logo.png" alt="drawing" width="150"/>
+<!-- markdownlint-enable MD033 -->
+
 Implementation of the paper "Tackling the Objective Inconsistency Problem in Heterogeneous Federated Optimization" ECE 533 - Advanced Computer Communication Networks, University of Illinois Chicago, fall 2023.
 
 ## Project structure
