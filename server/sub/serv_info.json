@@ -1,0 +1,10 @@
+{
+    "ip": "127.0.0.1",
+    "port": 9099,
+    "clients": [],
+    "parameters": {
+        "n_train": 4000,
+        "n_neurons_hidden": 30,
+        "learning_rate": 0.0000005
+    }
+}

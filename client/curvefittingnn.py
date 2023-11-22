@@ -4,8 +4,8 @@ import os
 from typing import Callable
 import warnings
 
-from sub.utilities import loadingBar
-from sub.config import VERB
+from utilities import loadingBar
+from config import VERB
 
 
 def tanh_prime(x):
@@ -130,6 +130,8 @@ class CurveFitter:
         if self._train_init:
             warnings.warn("Overwriting existing training set!")
 
+        assert len(x_train) == len(y_train), "x and y must be equal lengths"
+        self.n_train = len(x_train)
         self.x_train = x_train
         self.y_train = y_train
         self._train_init = True
