@@ -79,7 +79,7 @@ $$
 \end{bmatrix}
 $$
 
-where each column contains the average gradient of the objective function for batch $k\in \left\{0, \ldots, \tau_i - 1\right\}$.
+where each column contains the average gradient of the objective function for batch $k = 0, \ldots, \tau_i - 1$.
 
 ### Client Operation
 
