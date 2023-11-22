@@ -405,7 +405,8 @@ def targetFunction(x: float) -> float:
     ---
     Sample function to be approximated by the model.
 
-    $ y = \sin{(20x)} + 3x$
+    Expression:
+        y = sin(4x) + 2x
     """
     return np.sin(4 * x) + 2 * x
 
